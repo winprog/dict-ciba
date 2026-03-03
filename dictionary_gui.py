@@ -4,9 +4,15 @@ import requests
 import tempfile
 import subprocess
 import threading
+import sys
+import os
 from typing import Optional, Dict, Any
 from tkinter import *
 from tkinter import messagebox
+
+# 导入取词服务
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from word_capture_service import get_service, start_service, stop_service, on_capture
 
 
 def query_word(word: str) -> Dict[str, Any]:
@@ -83,6 +89,25 @@ class DictionaryApp:
         self.root.title("Dictionary")
         self.root.geometry("500x400")
         
+        # 取词服务状态
+        self.capture_mode = False
+        
+        # 顶部按钮区域
+        self.top_frame = Frame(root, pady=5)
+        self.top_frame.pack(fill=X)
+        
+        # 取词模式按钮
+        self.capture_btn = Button(self.top_frame, text="启动取词模式", 
+                                 command=self.toggle_capture_mode,
+                                 bg="lightgreen", font=("Arial", 10))
+        self.capture_btn.pack(side=LEFT, padx=10)
+        
+        # 状态标签
+        self.status_label = Label(self.top_frame, text="取词模式: 关闭", 
+                                 font=("Arial", 10), fg="gray")
+        self.status_label.pack(side=LEFT, padx=10)
+        
+        # 输入区域
         self.input_frame = Frame(root, pady=10)
         self.input_frame.pack(fill=X)
         
@@ -93,6 +118,7 @@ class DictionaryApp:
         self.btn = Button(self.input_frame, text="Search", command=self.search)
         self.btn.pack(side=RIGHT, padx=(5, 10))
         
+        # 结果区域
         self.result_frame = Frame(root, padx=10, pady=10)
         self.result_frame.pack(fill=BOTH, expand=True)
         
@@ -112,26 +138,97 @@ class DictionaryApp:
         self.scrollbar.pack(side=RIGHT, fill=Y)
         
         self.current_data = None
+        
+        # 设置取词回调
+        on_capture(self.handle_captured_word)
+        
+        # 窗口关闭时停止取词服务
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def toggle_capture_mode(self):
+        """切换取词模式"""
+        if not self.capture_mode:
+            # 启动取词模式
+            try:
+                start_service()
+                self.capture_mode = True
+                self.capture_btn.config(text="停止取词模式", bg="lightcoral")
+                self.status_label.config(text="取词模式: 运行中", fg="green")
+                messagebox.showinfo("取词模式", "取词模式已启动，请将鼠标悬停在单词上或选中文本进行取词")
+            except Exception as e:
+                messagebox.showerror("错误", f"启动取词服务失败: {e}")
+        else:
+            # 停止取词模式
+            stop_service()
+            self.capture_mode = False
+            self.capture_btn.config(text="启动取词模式", bg="lightgreen")
+            self.status_label.config(text="取词模式: 关闭", fg="gray")
+            messagebox.showinfo("取词模式", "取词模式已停止")
+    
+    def handle_captured_word(self, word):
+        """处理捕获到的单词"""
+        if not word or len(word.strip()) == 0:
+            return
+            
+        # 在GUI线程中更新界面
+        self.root.after(0, lambda: self._process_captured_word(word))
+    
+    def _process_captured_word(self, word):
+        """在GUI线程中处理捕获的单词"""
+        # 更新输入框
+        self.entry.delete(0, END)
+        self.entry.insert(0, word)
+        
+        # 自动搜索
+        self.search()
+        
+        # 显示捕获提示
+        self.show_capture_notification(word)
+    
+    def show_capture_notification(self, word):
+        """显示捕获成功的通知"""
+        # 创建临时通知标签
+        notification = Label(self.top_frame, text=f"已捕获: {word}", 
+                           font=("Arial", 10), fg="blue", bg="lightyellow")
+        notification.pack(side=RIGHT, padx=10)
+        
+        # 3秒后自动移除通知
+        self.root.after(3000, notification.destroy)
     
     def search(self):
         word = self.entry.get().strip()
         if not word:
             return
         
+        # 清空结果区域
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         
+        # 显示加载中
         loading_label = Label(self.scrollable_frame, text="Loading...", font=("Arial", 12))
         loading_label.pack()
         self.root.update()
         
-        try:
-            self.current_data = query_word(word)
-            loading_label.destroy()
-            self.display_result(self.current_data)
-        except Exception as e:
-            loading_label.destroy()
-            messagebox.showerror("Error", str(e))
+        # 在新线程中执行搜索
+        def search_thread():
+            try:
+                data = query_word(word)
+                self.root.after(0, lambda: self._display_result(data, loading_label))
+            except Exception as e:
+                self.root.after(0, lambda: self._search_error(e, loading_label))
+        
+        threading.Thread(target=search_thread, daemon=True).start()
+    
+    def _display_result(self, data, loading_label):
+        """显示搜索结果"""
+        loading_label.destroy()
+        self.current_data = data
+        self.display_result(data)
+    
+    def _search_error(self, error, loading_label):
+        """处理搜索错误"""
+        loading_label.destroy()
+        messagebox.showerror("Error", str(error))
     
     def display_result(self, data):
         word = data.get("word", "")
@@ -184,6 +281,12 @@ class DictionaryApp:
                         mean_label = Label(meanings_frame, text=means_text, 
                                          font=("Arial", 10), fg="#555", wraplength=450, justify=LEFT)
                         mean_label.pack(anchor=W, padx=(10, 0))
+    
+    def on_closing(self):
+        """窗口关闭时的处理"""
+        if self.capture_mode:
+            stop_service()
+        self.root.destroy()
 
 
 if __name__ == "__main__":
