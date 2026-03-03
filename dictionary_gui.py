@@ -6,6 +6,7 @@ import subprocess
 import threading
 import sys
 import os
+import time
 from typing import Optional, Dict, Any
 from tkinter import *
 from tkinter import messagebox
@@ -89,8 +90,20 @@ class DictionaryApp:
         self.root.title("Dictionary")
         self.root.geometry("500x400")
         
-        # 取词服务状态
+        # 窗口管理状态
         self.capture_mode = False
+        self.window_visible = True
+        self.auto_hide_timer = None
+        self.original_geometry = None
+        self.last_capture_time = 0
+        
+        # 设置窗口初始属性
+        self.root.attributes('-topmost', False)  # 初始不在最上层
+        self.root.attributes('-alpha', 0.95)     # 设置透明度
+        
+        # 绑定窗口焦点事件
+        self.root.bind('<FocusIn>', self.on_focus_in)
+        self.root.bind('<FocusOut>', self.on_focus_out)
         
         # 顶部按钮区域
         self.top_frame = Frame(root, pady=5)
@@ -106,6 +119,17 @@ class DictionaryApp:
         self.status_label = Label(self.top_frame, text="取词模式: 关闭", 
                                  font=("Arial", 10), fg="gray")
         self.status_label.pack(side=LEFT, padx=10)
+        
+        # 窗口控制按钮
+        self.window_btn = Button(self.top_frame, text="置顶显示", 
+                                command=self.toggle_window_topmost,
+                                bg="lightblue", font=("Arial", 9))
+        self.window_btn.pack(side=RIGHT, padx=5)
+        
+        self.hide_btn = Button(self.top_frame, text="隐藏窗口", 
+                               command=self.hide_window,
+                               bg="lightyellow", font=("Arial", 9))
+        self.hide_btn.pack(side=RIGHT, padx=5)
         
         # 输入区域
         self.input_frame = Frame(root, pady=10)
@@ -165,16 +189,83 @@ class DictionaryApp:
             self.status_label.config(text="取词模式: 关闭", fg="gray")
             messagebox.showinfo("取词模式", "取词模式已停止")
     
+    def toggle_window_topmost(self):
+        """切换窗口置顶状态"""
+        current_state = self.root.attributes('-topmost')
+        new_state = not current_state
+        self.root.attributes('-topmost', new_state)
+        
+        if new_state:
+            self.window_btn.config(text="取消置顶", bg="lightcoral")
+        else:
+            self.window_btn.config(text="置顶显示", bg="lightblue")
+    
+    def hide_window(self):
+        """隐藏窗口"""
+        self.root.withdraw()  # 隐藏窗口
+        self.window_visible = False
+        self.hide_btn.config(text="显示窗口", bg="lightgreen")
+        
+        # 设置定时器，5秒后自动显示窗口（如果用户没有手动显示）
+        if self.auto_hide_timer:
+            self.root.after_cancel(self.auto_hide_timer)
+        self.auto_hide_timer = self.root.after(5000, self.auto_show_window)
+    
+    def auto_show_window(self):
+        """自动显示窗口"""
+        if not self.window_visible:
+            self.show_window()
+    
+    def show_window(self):
+        """显示窗口"""
+        self.root.deiconify()  # 显示窗口
+        self.window_visible = True
+        self.hide_btn.config(text="隐藏窗口", bg="lightyellow")
+        
+        # 取消自动隐藏定时器
+        if self.auto_hide_timer:
+            self.root.after_cancel(self.auto_hide_timer)
+            self.auto_hide_timer = None
+    
+    def on_focus_in(self, event=None):
+        """窗口获得焦点时的处理"""
+        # 取消自动隐藏定时器
+        if self.auto_hide_timer:
+            self.root.after_cancel(self.auto_hide_timer)
+            self.auto_hide_timer = None
+    
+    def on_focus_out(self, event=None):
+        """窗口失去焦点时的处理"""
+        # 如果不是刚刚捕获单词，设置自动隐藏
+        current_time = time.time()
+        if current_time - self.last_capture_time > 2:  # 2秒内捕获的单词不自动隐藏
+            self.root.after(3000, self.auto_hide_if_not_focused)  # 3秒后检查
+    
+    def auto_hide_if_not_focused(self):
+        """如果窗口没有焦点，自动隐藏"""
+        if not self.root.focus_get() and self.window_visible:
+            self.hide_window()
+    
     def handle_captured_word(self, word):
         """处理捕获到的单词"""
         if not word or len(word.strip()) == 0:
             return
             
+        # 更新最后捕获时间
+        self.last_capture_time = time.time()
+        
         # 在GUI线程中更新界面
         self.root.after(0, lambda: self._process_captured_word(word))
     
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
+        # 确保窗口可见
+        if not self.window_visible:
+            self.show_window()
+        
+        # 临时置顶窗口以便查看结果
+        self.root.attributes('-topmost', True)
+        
         # 更新输入框
         self.entry.delete(0, END)
         self.entry.insert(0, word)
@@ -184,6 +275,19 @@ class DictionaryApp:
         
         # 显示捕获提示
         self.show_capture_notification(word)
+        
+        # 3秒后取消置顶（如果用户没有手动置顶）
+        self.root.after(3000, self._restore_window_state)
+    
+    def _restore_window_state(self):
+        """恢复窗口状态"""
+        # 如果用户没有手动置顶，取消置顶
+        if not self.root.attributes('-topmost'):
+            return
+            
+        # 检查窗口按钮状态
+        if self.window_btn.cget('text') == "置顶显示":
+            self.root.attributes('-topmost', False)
     
     def show_capture_notification(self, word):
         """显示捕获成功的通知"""
