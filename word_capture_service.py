@@ -5,6 +5,7 @@ import threading
 import os
 import sys
 import signal
+import re
 from pathlib import Path
 import logging
 
@@ -74,8 +75,15 @@ def get_word_under_mouse():
     return None
 
 
-def get_selected_text():
-    """获取选中文本"""
+def get_selected_text(service_instance=None):
+    """获取选中文本（优化版，检测用户操作）"""
+    current_time = time.time()
+    
+    # 如果是服务实例调用，检查用户操作时间
+    if service_instance and current_time - service_instance._user_copy_time < 0.5:
+        # 用户最近有复制操作，跳过自动检测
+        return None
+    
     for selection in ["primary", "clipboard"]:
         try:
             result = subprocess.run(
@@ -92,6 +100,11 @@ def get_selected_text():
                     if any(char in text for char in ';|`$\\'):
                         logger.debug("跳过可能不安全的文本")
                         continue
+                    
+                    # 如果是服务实例调用，记录用户操作时间
+                    if service_instance and selection == "clipboard":
+                        service_instance._user_copy_time = current_time
+                        
                     return text
         except Exception as e:
             logger.debug(f"获取选中文本失败 ({selection}): {e}")
@@ -99,10 +112,12 @@ def get_selected_text():
 
 
 def get_word_at_position(x, y):
-    """获取鼠标位置的单词"""
+    """获取鼠标位置的单词（优化版，减少抖动）"""
+    current_clipboard = ""
+    should_restore_clipboard = True  # 默认需要恢复剪贴板
+    
     try:
         # 先保存当前剪贴板内容
-        current_clipboard = ""
         try:
             result = subprocess.run(
                 ["xclip", "-selection", "clipboard", "-o"],
@@ -113,37 +128,58 @@ def get_word_at_position(x, y):
         except Exception as e:
             logger.debug(f"保存剪贴板失败: {e}")
 
-        # 模拟 Ctrl+C 复制
-        result = subprocess.run(
+        # 模拟鼠标点击选中单词（更温和的方式）
+        # 先点击鼠标左键选中单词
+        subprocess.run(
+            ["xdotool", "mousemove", str(x), str(y), "click", "1"],
+            capture_output=True, text=True, timeout=1
+        )
+        time.sleep(0.02)  # 短暂等待选中生效
+        
+        # 然后模拟 Ctrl+C 复制
+        subprocess.run(
             ["xdotool", "key", "ctrl+c"],
             capture_output=True, text=True, timeout=1
         )
-        time.sleep(0.05)
+        time.sleep(0.1)  # 增加等待时间确保复制完成
+        
+        # 获取剪贴板内容
         result = subprocess.run(
             ["xclip", "-selection", "clipboard", "-o"],
             capture_output=True, text=True, timeout=1
         )
+        
         if result.returncode == 0:
             text = result.stdout.strip()
-            if text and any(ord(c) < 32 for c in text):
+            # 验证文本有效性
+            if not text or len(text) > 50:  # 限制文本长度
                 return None
-            # 验证文本安全性
-            if any(char in text for char in ';|`$\\'):
+            if any(ord(c) < 32 for c in text):  # 控制字符检查
+                return None
+            if any(char in text for char in ';|`$\\'):  # 安全性检查
                 logger.debug("跳过可能不安全的文本")
                 return None
+            
+            # 额外的文本验证：只接受字母、数字和常见标点
+            if not re.match(r'^[\w\s\-\.,!?;:"\'()]+$', text):
+                return None
+            
+            # 如果成功获取到有效文本，不需要恢复剪贴板
+            should_restore_clipboard = False
             return text
     except Exception as e:
         logger.debug(f"获取鼠标位置单词失败: {e}")
     finally:
-        # 恢复剪贴板内容
-        try:
-            if current_clipboard:
+        # 只有在获取失败时才恢复剪贴板内容
+        if should_restore_clipboard and current_clipboard:
+            try:
                 subprocess.run(
                     ["xclip", "-selection", "clipboard", "-i"],
                     input=current_clipboard, text=True, timeout=1
                 )
-        except Exception as e:
-            logger.debug(f"恢复剪贴板失败: {e}")
+                logger.debug("恢复剪贴板内容")
+            except Exception as e:
+                logger.debug(f"恢复剪贴板失败: {e}")
     
     return None
 
@@ -159,6 +195,8 @@ class WordCaptureService:
         self.poll_interval = poll_interval
         self.mouse_check_interval = mouse_check_interval
         self._mouse_stationary_count = 0
+        self._user_copy_time = 0  # 记录用户复制操作的时间
+        self._last_clipboard_check = 0  # 上次检查剪贴板的时间
 
     def start(self):
         if self.running:
@@ -215,12 +253,63 @@ class WordCaptureService:
         self.callback = callback
 
     def _monitor_loop(self):
+        """优化的监控循环，减少抖动和冲突"""
+        last_trigger_time = 0
+        trigger_cooldown = 0.3  # 300ms冷却时间
+        
         while self.running:
             try:
                 if self.stopping:
                     time.sleep(0.1)
                     continue
+                
+                current_time = time.time()
+                
+                # 检查冷却时间
+                if current_time - last_trigger_time < trigger_cooldown:
+                    time.sleep(self.poll_interval)
+                    continue
+                
+                # 优先检查选中文本（用户主动操作）
+                selected = get_selected_text(self)
+                if selected and selected != self.last_word and not self.stopping:
+                    # 更严格的重复检测：清理标点后比较
+                    cleaned_selected = self._clean_word(selected)
+                    cleaned_last = self._clean_word(self.last_captured_word)
+                    if cleaned_selected and cleaned_selected == cleaned_last:
+                        time.sleep(self.poll_interval)
+                        continue
                     
+                    # 更新状态并触发回调
+                    self.last_word = selected
+                    self.last_captured_word = selected
+                    last_trigger_time = current_time
+                    logger.debug(f"选中文本触发回调: '{selected}'")
+                    
+                    if self.callback:
+                        try:
+                            # 获取鼠标位置并传递给回调
+                            mouse_info = get_word_under_mouse()
+                            if mouse_info:
+                                mouse_x, mouse_y, _ = mouse_info
+                                # 尝试调用带位置参数的回调
+                                try:
+                                    self.callback(selected, mouse_x, mouse_y)
+                                except TypeError:
+                                    # 如果参数不匹配，回退到单参数调用
+                                    self.callback(selected)
+                            else:
+                                self.callback(selected)
+                        except Exception as e:
+                            logger.error(f"回调执行失败: {e}")
+                    else:
+                        self._default_handler(selected)
+                    
+                    # 处理选中文本后跳过鼠标悬停检查，避免冲突
+                    time.sleep(self.poll_interval)
+                    continue
+                
+                # 鼠标悬停检查（频率较低，避免抖动）
                 result = subprocess.run(
                     ["xdotool", "getmouselocation", "--shell"],
                     capture_output=True, text=True, timeout=1
@@ -244,66 +333,45 @@ class WordCaptureService:
                     if current_pos is not None:
                         self.last_mouse_pos = current_pos
                 
+                # 只有当鼠标静止一段时间后才触发悬停取词
                 if self._mouse_stationary_count >= self.mouse_check_interval:
                     # 重置计数但设置一个冷却期
-                    self._mouse_stationary_count = -5  # 5秒冷却期
-                    selected = get_word_at_position(*self.last_mouse_pos) if self.last_mouse_pos else None
-                    if selected and selected != self.last_word and not self.stopping:
-                        # 更严格的重复检测：清理标点后比较
-                        cleaned_selected = self._clean_word(selected)
-                        cleaned_last = self._clean_word(self.last_captured_word)
-                        if cleaned_selected and cleaned_selected == cleaned_last:
-                            continue
-                        self.last_word = selected
-                        self.last_captured_word = selected
-                        logger.debug(f"触发回调: '{selected}'")
-                        if self.callback:
-                            try:
-                                # 获取鼠标位置并传递给回调
-                                mouse_info = get_word_under_mouse()
-                                if mouse_info:
-                                    mouse_x, mouse_y, _ = mouse_info
-                                    # 尝试调用带位置参数的回调
-                                    try:
-                                        self.callback(selected, mouse_x, mouse_y)
-                                    except TypeError:
-                                        # 如果参数不匹配，回退到单参数调用
-                                        self.callback(selected)
-                                else:
-                                    self.callback(selected)
-                            except Exception as e:
-                                logger.error(f"回调执行失败: {e}")
-                        else:
-                            self._default_handler(selected)
-                
-                selected = get_selected_text()
-                if selected and selected != self.last_word and not self.stopping:
-                    # 更严格的重复检测：清理标点后比较
-                    cleaned_selected = self._clean_word(selected)
-                    cleaned_last = self._clean_word(self.last_captured_word)
-                    if cleaned_selected and cleaned_selected == cleaned_last:
-                        continue
-                    self.last_word = selected
-                    self.last_captured_word = selected
-                    logger.debug(f"触发回调: '{selected}'")
-                    if self.callback:
-                        try:
-                            # 获取鼠标位置并传递给回调
-                            mouse_info = get_word_under_mouse()
-                            if mouse_info:
-                                mouse_x, mouse_y, _ = mouse_info
-                                # 尝试调用带位置参数的回调
+                    self._mouse_stationary_count = -10  # 10秒冷却期
+                    
+                    # 再次检查冷却时间
+                    if current_time - last_trigger_time >= trigger_cooldown:
+                        selected = get_word_at_position(*self.last_mouse_pos) if self.last_mouse_pos else None
+                        if selected and selected != self.last_word and not self.stopping:
+                            # 更严格的重复检测：清理标点后比较
+                            cleaned_selected = self._clean_word(selected)
+                            cleaned_last = self._clean_word(self.last_captured_word)
+                            if cleaned_selected and cleaned_selected == cleaned_last:
+                                time.sleep(self.poll_interval)
+                                continue
+                            
+                            self.last_word = selected
+                            self.last_captured_word = selected
+                            last_trigger_time = current_time
+                            logger.debug(f"鼠标悬停触发回调: '{selected}'")
+                            
+                            if self.callback:
                                 try:
-                                    self.callback(selected, mouse_x, mouse_y)
-                                except TypeError:
-                                    # 如果参数不匹配，回退到单参数调用
-                                    self.callback(selected)
+                                    # 获取鼠标位置并传递给回调
+                                    mouse_info = get_word_under_mouse()
+                                    if mouse_info:
+                                        mouse_x, mouse_y, _ = mouse_info
+                                        # 尝试调用带位置参数的回调
+                                        try:
+                                            self.callback(selected, mouse_x, mouse_y)
+                                        except TypeError:
+                                            # 如果参数不匹配，回退到单参数调用
+                                            self.callback(selected)
+                                    else:
+                                        self.callback(selected)
+                                except Exception as e:
+                                    logger.error(f"回调执行失败: {e}")
                             else:
-                                self.callback(selected)
-                        except Exception as e:
-                            logger.error(f"回调执行失败: {e}")
-                    else:
-                        self._default_handler(selected)
+                                self._default_handler(selected)
             except Exception as e:
                 logger.error(f"监控循环错误: {e}")
             

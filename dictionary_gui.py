@@ -193,7 +193,6 @@ class DictionaryApp:
                 self.capture_mode = True
                 self.capture_btn.config(text="停止取词模式", bg="lightcoral")
                 self.status_label.config(text="取词模式: 运行中", fg="green")
-                messagebox.showinfo("取词模式", "取词模式已启动，请将鼠标悬停在单词上或选中文本进行取词")
             except Exception as e:
                 messagebox.showerror("错误", f"启动取词服务失败: {e}")
         else:
@@ -202,7 +201,6 @@ class DictionaryApp:
             self.capture_mode = False
             self.capture_btn.config(text="启动取词模式", bg="lightgreen")
             self.status_label.config(text="取词模式: 关闭", fg="gray")
-            messagebox.showinfo("取词模式", "取词模式已停止")
     
     def toggle_window_topmost(self):
         """切换窗口置顶状态"""
