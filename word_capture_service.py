@@ -238,7 +238,18 @@ class WordCaptureService:
                         logger.debug(f"触发回调: '{selected}'")
                         if self.callback:
                             try:
-                                self.callback(selected)
+                                # 获取鼠标位置并传递给回调
+                                mouse_info = get_word_under_mouse()
+                                if mouse_info:
+                                    mouse_x, mouse_y, _ = mouse_info
+                                    # 尝试调用带位置参数的回调
+                                    try:
+                                        self.callback(selected, mouse_x, mouse_y)
+                                    except TypeError:
+                                        # 如果参数不匹配，回退到单参数调用
+                                        self.callback(selected)
+                                else:
+                                    self.callback(selected)
                             except Exception as e:
                                 logger.error(f"回调执行失败: {e}")
                         else:
@@ -253,7 +264,18 @@ class WordCaptureService:
                     logger.debug(f"触发回调: '{selected}'")
                     if self.callback:
                         try:
-                            self.callback(selected)
+                            # 获取鼠标位置并传递给回调
+                            mouse_info = get_word_under_mouse()
+                            if mouse_info:
+                                mouse_x, mouse_y, _ = mouse_info
+                                # 尝试调用带位置参数的回调
+                                try:
+                                    self.callback(selected, mouse_x, mouse_y)
+                                except TypeError:
+                                    # 如果参数不匹配，回退到单参数调用
+                                    self.callback(selected)
+                            else:
+                                self.callback(selected)
                         except Exception as e:
                             logger.error(f"回调执行失败: {e}")
                     else:

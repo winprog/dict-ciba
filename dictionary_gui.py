@@ -88,7 +88,18 @@ class DictionaryApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Dictionary")
-        self.root.geometry("500x400")
+        
+        # 获取屏幕尺寸
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        
+        # 计算窗口初始位置（屏幕右下角）
+        window_width = 500
+        window_height = 400
+        x = screen_width - window_width - 50  # 距离右边50像素
+        y = screen_height - window_height - 50  # 距离底部50像素
+        
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
         # 窗口管理状态
         self.capture_mode = False
@@ -96,6 +107,7 @@ class DictionaryApp:
         self.auto_hide_timer = None
         self.original_geometry = None
         self.last_capture_time = 0
+        self.last_mouse_position = None  # 记录最后一次取词位置
         
         # 设置窗口初始属性
         self.root.attributes('-topmost', False)  # 初始不在最上层
@@ -283,7 +295,57 @@ class DictionaryApp:
         
         return text.strip()
     
-    def handle_captured_word(self, word):
+    def adjust_window_position(self):
+        """智能调整窗口位置，避免遮挡取词位置"""
+        if not self.last_mouse_position:
+            return
+            
+        mouse_x, mouse_y = self.last_mouse_position
+        
+        # 获取屏幕尺寸
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # 获取窗口尺寸
+        window_width = 500
+        window_height = 400
+        
+        # 计算安全距离（避免窗口紧贴屏幕边缘）
+        margin = 20
+        
+        # 根据鼠标位置选择最佳显示区域
+        # 将屏幕分为4个象限，选择远离鼠标的象限
+        screen_center_x = screen_width // 2
+        screen_center_y = screen_height // 2
+        
+        if mouse_x < screen_center_x and mouse_y < screen_center_y:
+            # 鼠标在左上角，窗口放在右下角
+            x = screen_width - window_width - margin
+            y = screen_height - window_height - margin
+        elif mouse_x >= screen_center_x and mouse_y < screen_center_y:
+            # 鼠标在右上角，窗口放在左下角
+            x = margin
+            y = screen_height - window_height - margin
+        elif mouse_x < screen_center_x and mouse_y >= screen_center_y:
+            # 鼠标在左下角，窗口放在右上角
+            x = screen_width - window_width - margin
+            y = margin
+        else:
+            # 鼠标在右下角，窗口放在左上角
+            x = margin
+            y = margin
+        
+        # 应用新的窗口位置
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # 确保窗口在屏幕范围内
+        self.root.update_idletasks()
+        
+    def set_mouse_position(self, x, y):
+        """记录鼠标取词位置"""
+        self.last_mouse_position = (x, y)
+    
+    def handle_captured_word(self, word, mouse_x=None, mouse_y=None):
         """处理捕获到的单词"""
         if not word or len(word.strip()) == 0:
             return
@@ -292,6 +354,10 @@ class DictionaryApp:
         cleaned_word = self.clean_punctuation(word)
         if not cleaned_word or len(cleaned_word.strip()) == 0:
             return
+        
+        # 记录鼠标位置（如果提供了）
+        if mouse_x is not None and mouse_y is not None:
+            self.set_mouse_position(mouse_x, mouse_y)
             
         # 更新最后捕获时间
         self.last_capture_time = time.time()
@@ -310,6 +376,9 @@ class DictionaryApp:
         # 确保窗口可见
         if not self.window_visible:
             self.show_window()
+        
+        # 智能调整窗口位置，避免遮挡取词位置
+        self.adjust_window_position()
         
         # 临时置顶窗口以便查看结果
         self.root.attributes('-topmost', True)
