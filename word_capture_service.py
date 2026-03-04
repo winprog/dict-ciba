@@ -193,6 +193,24 @@ class WordCaptureService:
             logger.error(f"删除PID文件失败: {e}")
         logger.info("单词捕获服务已停止")
 
+    def _clean_word(self, text):
+        """清理单词前后的标点符号"""
+        if not text:
+            return text
+            
+        # 中英文标点符号
+        punctuation_chars = '.,!?;:"\'`，。！？；："\'（）【】《》<>[]{}()'
+        
+        # 清理开头的标点符号
+        while text and text[0] in punctuation_chars:
+            text = text[1:]
+        
+        # 清理结尾的标点符号
+        while text and text[-1] in punctuation_chars:
+            text = text[:-1]
+        
+        return text.strip()
+    
     def set_callback(self, callback):
         self.callback = callback
 
@@ -231,7 +249,10 @@ class WordCaptureService:
                     self._mouse_stationary_count = -5  # 5秒冷却期
                     selected = get_word_at_position(*self.last_mouse_pos) if self.last_mouse_pos else None
                     if selected and selected != self.last_word and not self.stopping:
-                        if self.last_captured_word == selected:
+                        # 更严格的重复检测：清理标点后比较
+                        cleaned_selected = self._clean_word(selected)
+                        cleaned_last = self._clean_word(self.last_captured_word)
+                        if cleaned_selected and cleaned_selected == cleaned_last:
                             continue
                         self.last_word = selected
                         self.last_captured_word = selected
@@ -257,7 +278,10 @@ class WordCaptureService:
                 
                 selected = get_selected_text()
                 if selected and selected != self.last_word and not self.stopping:
-                    if self.last_captured_word == selected:
+                    # 更严格的重复检测：清理标点后比较
+                    cleaned_selected = self._clean_word(selected)
+                    cleaned_last = self._clean_word(self.last_captured_word)
+                    if cleaned_selected and cleaned_selected == cleaned_last:
                         continue
                     self.last_word = selected
                     self.last_captured_word = selected

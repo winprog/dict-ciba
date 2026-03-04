@@ -14,6 +14,7 @@ from tkinter import messagebox
 # 导入取词服务
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from word_capture_service import get_service, start_service, stop_service, on_capture
+from word_state_manager import WordStateManager
 
 
 def query_word(word: str) -> Dict[str, Any]:
@@ -106,8 +107,10 @@ class DictionaryApp:
         self.window_visible = True
         self.auto_hide_timer = None
         self.original_geometry = None
-        self.last_capture_time = 0
         self.last_mouse_position = None  # 记录最后一次取词位置
+        
+        # 单词状态管理器
+        self.word_state_manager = WordStateManager()
         
         # 设置窗口初始属性
         self.root.attributes('-topmost', False)  # 初始不在最上层
@@ -321,38 +324,31 @@ class DictionaryApp:
     
     def handle_captured_word(self, word, mouse_x=None, mouse_y=None):
         """处理捕获到的单词"""
-        if not word or len(word.strip()) == 0:
-            return
+        # 使用状态管理器处理新单词
+        result = self.word_state_manager.handle_new_word(word)
         
-        # 清理单词前后的标点符号
-        cleaned_word = self.clean_punctuation(word)
-        if not cleaned_word or len(cleaned_word.strip()) == 0:
+        # 调试信息
+        print(f"DEBUG DictionaryApp: 处理结果={result}")
+        
+        if not result['should_process']:
+            # 不需要处理的情况：空单词或相同单词
+            print(f"DEBUG DictionaryApp: 跳过处理，原因: {result['reason']}")
             return
         
         # 记录鼠标位置（如果提供了）
         if mouse_x is not None and mouse_y is not None:
             self.set_mouse_position(mouse_x, mouse_y)
-            
-        # 更新最后捕获时间
-        self.last_capture_time = time.time()
         
         # 在GUI线程中更新界面
-        self.root.after(0, lambda: self._process_captured_word(cleaned_word))
+        self.root.after(0, lambda: self._process_captured_word(result['cleaned_word']))
     
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
-        # 检查是否是同一个单词（没有切换）
-        # 注意：word参数是清理后的新单词，current_word是输入框中已有的单词
-        current_word_raw = self.entry.get().strip()
-        current_word_cleaned = self.clean_punctuation(current_word_raw)
+        # 状态管理器已经处理了单词比较，这里直接处理新单词
+        print(f"DEBUG DictionaryApp: 处理新单词 '{word}'")
         
-        # 调试信息：打印比较的单词
-        print(f"DEBUG: 新单词='{word}', 当前单词原始='{current_word_raw}', 当前单词清理后='{current_word_cleaned}', 是否相同={word == current_word_cleaned}")
-        
-        if word == current_word_cleaned:
-            # 同一个单词，不进行任何操作，保持窗口自然状态
-            print("DEBUG: 检测到相同单词，跳过处理")
-            return
+        # 更新状态管理器中的当前单词
+        self.word_state_manager.update_current_word(word)
         
         # 显示窗口（只根据取词状态决定）
         self.show_window()
