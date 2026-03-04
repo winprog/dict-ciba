@@ -1,0 +1,8 @@
+# 本项目依赖的Python包
+requests>=2.25.0
+
+# 系统依赖（需要在Ubuntu/Debian系统上安装）
+# sudo apt install xdotool xclip
+
+# 注意：tkinter是Python标准库的一部分，通常随Python一起安装
+# 如果tkinter不可用，可能需要安装：sudo apt install python3-tk
