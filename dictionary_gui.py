@@ -222,21 +222,6 @@ class DictionaryApp:
         if self.auto_hide_timer:
             self.root.after_cancel(self.auto_hide_timer)
             self.auto_hide_timer = None
-        
-        # 仅在取词模式下设置自动显示定时器
-        if self.capture_mode:
-            self.auto_hide_timer = self.root.after(15000, self.auto_show_window)  # 15秒后检查
-    
-    def auto_show_window(self):
-        """自动显示窗口"""
-        # 清除定时器引用
-        self.auto_hide_timer = None
-        
-        # 仅在取词模式下且窗口隐藏时才自动显示
-        if not self.window_visible and self.capture_mode:
-            # 检查是否真的需要显示（比如用户可能在手动操作）
-            if not self.root.focus_get():
-                self.show_window()
     
     def show_window(self):
         """显示窗口"""
@@ -258,24 +243,13 @@ class DictionaryApp:
     
     def on_focus_out(self, event=None):
         """窗口失去焦点时的处理"""
-        # 只有在取词模式下才考虑自动隐藏
-        if not self.capture_mode:
-            return
-            
-        # 如果不是刚刚捕获单词，设置自动隐藏
-        current_time = time.time()
-        if current_time - self.last_capture_time > 5:  # 5秒内捕获的单词不自动隐藏
-            self.root.after(5000, self.auto_hide_if_not_focused)  # 5秒后检查
+        # 窗口显示逻辑只根据取词状态决定，不自动隐藏
+        pass
     
     def auto_hide_if_not_focused(self):
         """如果窗口没有焦点，自动隐藏"""
-        # 只有在取词模式下且窗口可见时才自动隐藏
-        if not self.capture_mode or not self.window_visible:
-            return
-            
-        # 检查窗口是否真的没有焦点
-        if not self.root.focus_get():
-            self.hide_window()
+        # 窗口显示逻辑只根据取词状态决定，不自动隐藏
+        pass
     
     def clean_punctuation(self, text):
         """清理文本前后的标点符号"""
@@ -368,14 +342,20 @@ class DictionaryApp:
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
         # 检查是否是同一个单词（没有切换）
-        current_word = self.entry.get().strip()
-        if word == current_word:
+        # 注意：word参数是清理后的新单词，current_word是输入框中已有的单词
+        current_word_raw = self.entry.get().strip()
+        current_word_cleaned = self.clean_punctuation(current_word_raw)
+        
+        # 调试信息：打印比较的单词
+        print(f"DEBUG: 新单词='{word}', 当前单词原始='{current_word_raw}', 当前单词清理后='{current_word_cleaned}', 是否相同={word == current_word_cleaned}")
+        
+        if word == current_word_cleaned:
             # 同一个单词，不进行任何操作，保持窗口自然状态
+            print("DEBUG: 检测到相同单词，跳过处理")
             return
         
-        # 确保窗口可见
-        if not self.window_visible:
-            self.show_window()
+        # 显示窗口（只根据取词状态决定）
+        self.show_window()
         
         # 智能调整窗口位置，避免遮挡取词位置
         self.adjust_window_position()
@@ -383,7 +363,7 @@ class DictionaryApp:
         # 临时置顶窗口以便查看结果
         self.root.attributes('-topmost', True)
         
-        # 更新输入框
+        # 更新输入框（只有不同单词才更新）
         self.entry.delete(0, END)
         self.entry.insert(0, word)
         
