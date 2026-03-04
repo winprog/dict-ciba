@@ -265,16 +265,39 @@ class DictionaryApp:
         if not self.root.focus_get():
             self.hide_window()
     
+    def clean_punctuation(self, text):
+        """清理文本前后的标点符号"""
+        if not text:
+            return text
+            
+        # 中英文标点符号
+        punctuation_chars = '.,!?;:"\'`，。！？；："\'（）【】《》<>[]{}()'
+        
+        # 清理开头的标点符号
+        while text and text[0] in punctuation_chars:
+            text = text[1:]
+        
+        # 清理结尾的标点符号
+        while text and text[-1] in punctuation_chars:
+            text = text[:-1]
+        
+        return text.strip()
+    
     def handle_captured_word(self, word):
         """处理捕获到的单词"""
         if not word or len(word.strip()) == 0:
+            return
+        
+        # 清理单词前后的标点符号
+        cleaned_word = self.clean_punctuation(word)
+        if not cleaned_word or len(cleaned_word.strip()) == 0:
             return
             
         # 更新最后捕获时间
         self.last_capture_time = time.time()
         
         # 在GUI线程中更新界面
-        self.root.after(0, lambda: self._process_captured_word(word))
+        self.root.after(0, lambda: self._process_captured_word(cleaned_word))
     
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
