@@ -206,15 +206,25 @@ class DictionaryApp:
         self.window_visible = False
         self.hide_btn.config(text="显示窗口", bg="lightgreen")
         
-        # 设置定时器，5秒后自动显示窗口（如果用户没有手动显示）
+        # 取消之前的定时器
         if self.auto_hide_timer:
             self.root.after_cancel(self.auto_hide_timer)
-        self.auto_hide_timer = self.root.after(5000, self.auto_show_window)
+            self.auto_hide_timer = None
+        
+        # 仅在取词模式下设置自动显示定时器
+        if self.capture_mode:
+            self.auto_hide_timer = self.root.after(15000, self.auto_show_window)  # 15秒后检查
     
     def auto_show_window(self):
         """自动显示窗口"""
-        if not self.window_visible:
-            self.show_window()
+        # 清除定时器引用
+        self.auto_hide_timer = None
+        
+        # 仅在取词模式下且窗口隐藏时才自动显示
+        if not self.window_visible and self.capture_mode:
+            # 检查是否真的需要显示（比如用户可能在手动操作）
+            if not self.root.focus_get():
+                self.show_window()
     
     def show_window(self):
         """显示窗口"""
@@ -236,14 +246,23 @@ class DictionaryApp:
     
     def on_focus_out(self, event=None):
         """窗口失去焦点时的处理"""
+        # 只有在取词模式下才考虑自动隐藏
+        if not self.capture_mode:
+            return
+            
         # 如果不是刚刚捕获单词，设置自动隐藏
         current_time = time.time()
-        if current_time - self.last_capture_time > 2:  # 2秒内捕获的单词不自动隐藏
-            self.root.after(3000, self.auto_hide_if_not_focused)  # 3秒后检查
+        if current_time - self.last_capture_time > 5:  # 5秒内捕获的单词不自动隐藏
+            self.root.after(5000, self.auto_hide_if_not_focused)  # 5秒后检查
     
     def auto_hide_if_not_focused(self):
         """如果窗口没有焦点，自动隐藏"""
-        if not self.root.focus_get() and self.window_visible:
+        # 只有在取词模式下且窗口可见时才自动隐藏
+        if not self.capture_mode or not self.window_visible:
+            return
+            
+        # 检查窗口是否真的没有焦点
+        if not self.root.focus_get():
             self.hide_window()
     
     def handle_captured_word(self, word):
@@ -259,6 +278,12 @@ class DictionaryApp:
     
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
+        # 检查是否是同一个单词（没有切换）
+        current_word = self.entry.get().strip()
+        if word == current_word:
+            # 同一个单词，不进行任何操作，保持窗口自然状态
+            return
+        
         # 确保窗口可见
         if not self.window_visible:
             self.show_window()
