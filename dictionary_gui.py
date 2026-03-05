@@ -15,54 +15,7 @@ from tkinter import messagebox
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from word_capture_service import get_service, start_service, stop_service, on_capture
 from word_state_manager import WordStateManager
-
-
-def query_word(word: str) -> Dict[str, Any]:
-    url = f"https://www.iciba.com/word?w={word}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    
-    match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', response.text)
-    if not match:
-        raise ValueError("Failed to find word data on the page")
-    
-    data = json.loads(match.group(1))
-    word_info = data.get("props", {}).get("pageProps", {}).get("initialReduxState", {}).get("word", {}).get("wordInfo", {})
-    
-    if not word_info:
-        raise ValueError(f"Word '{word}' not found")
-    
-    return _parse_word_info(word_info)
-
-
-def _parse_word_info(word_info: Dict) -> Dict[str, Any]:
-    result = {
-        "word": word_info.get("baesInfo", {}).get("word_name", ""),
-        "exchanges": word_info.get("exchanges", []),
-    }
-    
-    symbols = word_info.get("baesInfo", {}).get("symbols", [])
-    if symbols:
-        symbol = symbols[0]
-        result["symbols"] = {
-            "word_symbol": symbol.get("word_symbol", ""),
-            "ph_en": symbol.get("ph_en", ""),
-            "ph_am": symbol.get("ph_am", ""),
-            "ph_en_mp3": symbol.get("ph_en_mp3", ""),
-            "ph_am_mp3": symbol.get("ph_am_mp3", ""),
-            "ph_tts_mp3": symbol.get("ph_tts_mp3", ""),
-            "parts": symbol.get("parts", []),
-        }
-        
-        from_symbols_mean = symbol.get("fromSymbolsMean", [])
-        if from_symbols_mean:
-            result["symbols"]["from_symbols_mean"] = from_symbols_mean
-    
-    return result
+from iciba import query_word
 
 
 def play_audio(url: str):
@@ -427,55 +380,81 @@ class DictionaryApp:
     
     def display_result(self, data):
         word = data.get("word", "")
-        symbols = data.get("symbols", {})
         
         word_label = Label(self.scrollable_frame, text=word, font=("Arial", 24, "bold"))
         word_label.pack(pady=(0, 10))
         
-        if symbols:
-            word_symbol = symbols.get("word_symbol", "")
-            if word_symbol:
-                Label(self.scrollable_frame, text=f"[{word_symbol}]", font=("Arial", 14)).pack()
+        # 检查是否为多单词短语
+        is_phrase = data.get("is_phrase", False)
+        
+        if is_phrase:
+            # 显示短语翻译结果
+            translation = data.get("translation", "")
+            from_lang = data.get("from_language", "")
+            to_lang = data.get("to_language", "")
             
-            ph_en = symbols.get("ph_en", "")
-            ph_am = symbols.get("ph_am", "")
-            ph_en_mp3 = symbols.get("ph_en_mp3", "")
-            ph_am_mp3 = symbols.get("ph_am_mp3", "")
+            if translation:
+                translation_frame = Frame(self.scrollable_frame)
+                translation_frame.pack(fill=X, pady=10)
+                
+                Label(translation_frame, text="翻译:", font=("Arial", 12, "bold")).pack(anchor=W)
+                
+                trans_label = Label(translation_frame, text=translation, 
+                                  font=("Arial", 14), fg="#333", wraplength=450, justify=LEFT)
+                trans_label.pack(anchor=W, pady=(5, 0))
+                
+                if from_lang and to_lang:
+                    lang_label = Label(translation_frame, text=f"{from_lang} → {to_lang}", 
+                                     font=("Arial", 10), fg="#666")
+                    lang_label.pack(anchor=W)
+        else:
+            # 单个单词的显示逻辑
+            symbols = data.get("symbols", {})
             
-            if ph_en or ph_am:
-                pron_frame = Frame(self.scrollable_frame)
-                pron_frame.pack(pady=5)
+            if symbols:
+                word_symbol = symbols.get("word_symbol", "")
+                if word_symbol:
+                    Label(self.scrollable_frame, text=f"[{word_symbol}]", font=("Arial", 14)).pack()
                 
-                if ph_en:
-                    en_btn = Button(pron_frame, text=f"EN: {ph_en}", fg="blue", cursor="hand2",
-                                   font=("Arial", 11), command=lambda: play_audio(ph_en_mp3))
-                    en_btn.pack(side=LEFT, padx=5)
+                ph_en = symbols.get("ph_en", "")
+                ph_am = symbols.get("ph_am", "")
+                ph_en_mp3 = symbols.get("ph_en_mp3", "")
+                ph_am_mp3 = symbols.get("ph_am_mp3", "")
                 
-                if ph_am:
-                    am_btn = Button(pron_frame, text=f"AM: {ph_am}", fg="blue", cursor="hand2",
-                                   font=("Arial", 11), command=lambda: play_audio(ph_am_mp3))
-                    am_btn.pack(side=LEFT, padx=5)
-            
-            parts = symbols.get("parts", [])
-            if parts:
-                meanings_frame = Frame(self.scrollable_frame)
-                meanings_frame.pack(fill=X, pady=10)
-                
-                Label(meanings_frame, text="Meanings:", font=("Arial", 12, "bold")).pack(anchor=W)
-                
-                for part in parts:
-                    part_name = part.get("part", "")
-                    means = part.get("means", [])
+                if ph_en or ph_am:
+                    pron_frame = Frame(self.scrollable_frame)
+                    pron_frame.pack(pady=5)
                     
-                    if part_name and means:
-                        part_label = Label(meanings_frame, text=f"{part_name}:", 
-                                         font=("Arial", 11, "bold"), fg="#333")
-                        part_label.pack(anchor=W, pady=(5, 0))
+                    if ph_en:
+                        en_btn = Button(pron_frame, text=f"EN: {ph_en}", fg="blue", cursor="hand2",
+                                       font=("Arial", 11), command=lambda: play_audio(ph_en_mp3))
+                        en_btn.pack(side=LEFT, padx=5)
+                    
+                    if ph_am:
+                        am_btn = Button(pron_frame, text=f"AM: {ph_am}", fg="blue", cursor="hand2",
+                                       font=("Arial", 11), command=lambda: play_audio(ph_am_mp3))
+                        am_btn.pack(side=LEFT, padx=5)
+                
+                parts = symbols.get("parts", [])
+                if parts:
+                    meanings_frame = Frame(self.scrollable_frame)
+                    meanings_frame.pack(fill=X, pady=10)
+                    
+                    Label(meanings_frame, text="Meanings:", font=("Arial", 12, "bold")).pack(anchor=W)
+                    
+                    for part in parts:
+                        part_name = part.get("part", "")
+                        means = part.get("means", [])
                         
-                        means_text = ", ".join(means[:10])
-                        mean_label = Label(meanings_frame, text=means_text, 
-                                         font=("Arial", 10), fg="#555", wraplength=450, justify=LEFT)
-                        mean_label.pack(anchor=W, padx=(10, 0))
+                        if part_name and means:
+                            part_label = Label(meanings_frame, text=f"{part_name}:", 
+                                             font=("Arial", 11, "bold"), fg="#333")
+                            part_label.pack(anchor=W, pady=(5, 0))
+                            
+                            means_text = ", ".join(means[:10])
+                            mean_label = Label(meanings_frame, text=means_text, 
+                                             font=("Arial", 10), fg="#555", wraplength=450, justify=LEFT)
+                            mean_label.pack(anchor=W, padx=(10, 0))
     
     def on_closing(self):
         """窗口关闭时的处理"""

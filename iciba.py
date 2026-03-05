@@ -32,22 +32,36 @@ def _parse_word_info(word_info: Dict) -> Dict[str, Any]:
         "exchanges": word_info.get("exchanges", []),
     }
     
-    symbols = word_info.get("baesInfo", {}).get("symbols", [])
-    if symbols:
-        symbol = symbols[0]
-        result["symbols"] = {
-            "word_symbol": symbol.get("word_symbol", ""),
-            "ph_en": symbol.get("ph_en", ""),
-            "ph_am": symbol.get("ph_am", ""),
-            "ph_en_mp3": symbol.get("ph_en_mp3", ""),
-            "ph_am_mp3": symbol.get("ph_am_mp3", ""),
-            "ph_tts_mp3": symbol.get("ph_tts_mp3", ""),
-            "parts": symbol.get("parts", []),
-        }
+    # 检查是否为多单词短语（翻译结果）
+    translate_result = word_info.get("baesInfo", {}).get("translate_result", "")
+    translate_type = word_info.get("baesInfo", {}).get("translate_type", 0)
+    
+    # 如果是短语翻译（translate_type == 2），优先使用翻译结果
+    if translate_type == 2 and translate_result:
+        result["is_phrase"] = True
+        result["translation"] = translate_result
+        result["from_language"] = word_info.get("baesInfo", {}).get("from", "")
+        result["to_language"] = word_info.get("baesInfo", {}).get("to", "")
+    else:
+        # 单个单词的解析逻辑
+        result["is_phrase"] = False
         
-        from_symbols_mean = symbol.get("fromSymbolsMean", [])
-        if from_symbols_mean:
-            result["symbols"]["from_symbols_mean"] = from_symbols_mean
+        symbols = word_info.get("baesInfo", {}).get("symbols", [])
+        if symbols:
+            symbol = symbols[0]
+            result["symbols"] = {
+                "word_symbol": symbol.get("word_symbol", ""),
+                "ph_en": symbol.get("ph_en", ""),
+                "ph_am": symbol.get("ph_am", ""),
+                "ph_en_mp3": symbol.get("ph_en_mp3", ""),
+                "ph_am_mp3": symbol.get("ph_am_mp3", ""),
+                "ph_tts_mp3": symbol.get("ph_tts_mp3", ""),
+                "parts": symbol.get("parts", []),
+            }
+            
+            from_symbols_mean = symbol.get("fromSymbolsMean", [])
+            if from_symbols_mean:
+                result["symbols"]["from_symbols_mean"] = from_symbols_mean
     
     sentences = word_info.get("new_sentence", [{}])[0].get("sentences", [])
     result["sentences"] = [
