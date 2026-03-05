@@ -36,15 +36,53 @@ def _parse_word_info(word_info: Dict) -> Dict[str, Any]:
     translate_result = word_info.get("baesInfo", {}).get("translate_result", "")
     translate_type = word_info.get("baesInfo", {}).get("translate_type", 0)
     
-    # 如果是短语翻译（translate_type == 2），优先使用翻译结果
+    # 检查是否为超长短语被识别为关键词（如"在线翻译"）
+    word_name = word_info.get("baesInfo", {}).get("word_name", "")
+    
+    # 情况1：短语翻译（translate_type == 2 且有翻译结果）
     if translate_type == 2 and translate_result:
         result["is_phrase"] = True
         result["translation"] = translate_result
         result["from_language"] = word_info.get("baesInfo", {}).get("from", "")
         result["to_language"] = word_info.get("baesInfo", {}).get("to", "")
+        result["result_type"] = "phrase_translation"
+        
+        # 尝试为短语获取TTS音频
+        symbols = word_info.get("baesInfo", {}).get("symbols", [])
+        if symbols:
+            symbol = symbols[0]
+            result["symbols"] = {
+                "ph_tts_mp3": symbol.get("ph_tts_mp3", ""),
+            }
+    
+    # 情况2：超长短语被识别为关键词（word_name 为中文关键词）
+    elif word_name and any('\u4e00' <= char <= '\u9fff' for char in word_name):  # 检查是否包含中文字符
+        result["is_phrase"] = True
+        result["translation"] = "该短语过长，已被识别为翻译请求关键词"
+        result["result_type"] = "keyword_detection"
+        
+        # 尝试从 fromSymbolsMean 中提取可能的翻译
+        from_symbols_mean = word_info.get("baesInfo", {}).get("fromSymbolsMean", [])
+        if from_symbols_mean:
+            for symbol_mean in from_symbols_mean:
+                words = symbol_mean.get("word", [])
+                for word_item in words:
+                    word_data = word_item.get("word", [])
+                    if word_data:
+                        for w in word_data:
+                            word_name_en = w.get("word_name", "")
+                            if word_name_en:
+                                result["suggestion"] = f"建议查询: {word_name_en}"
+                                break
+                    if "suggestion" in result:
+                        break
+                if "suggestion" in result:
+                    break
+    
+    # 情况3：单个单词的解析逻辑
     else:
-        # 单个单词的解析逻辑
         result["is_phrase"] = False
+        result["result_type"] = "single_word"
         
         symbols = word_info.get("baesInfo", {}).get("symbols", [])
         if symbols:

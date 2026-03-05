@@ -19,22 +19,84 @@ from iciba import query_word
 
 
 def play_audio(url: str):
+    """播放音频文件，使用ffplay统一处理所有格式"""
     if not url:
+        print("音频URL为空，无法播放")
         return
     
     def _play():
         try:
-            response = requests.get(url, timeout=10)
+            # 检查ffplay是否可用
+            result = subprocess.run(['which', 'ffplay'], capture_output=True)
+            if result.returncode != 0:
+                print("音频播放器 ffplay 未安装，请运行: sudo apt install ffmpeg")
+                return
+            
+            # 使用ffplay直接播放网络音频（无需下载）
+            # -autoexit: 播放完成后自动退出
+            # -nodisp: 不显示视频窗口
+            # -loglevel quiet: 静默模式，不输出日志
+            result = subprocess.run([
+                'ffplay', 
+                '-autoexit', 
+                '-nodisp', 
+                '-loglevel', 'quiet',
+                url
+            ], capture_output=True, timeout=30)
+            
+            if result.returncode != 0:
+                print(f"音频播放失败，返回码: {result.returncode}")
+                if result.stderr:
+                    error_msg = result.stderr.decode('utf-8', errors='ignore')
+                    print(f"错误信息: {error_msg[:200]}")  # 只显示前200字符
+                
+                # 如果ffplay失败，回退到下载+播放的方式
+                print("尝试使用备用播放方式...")
+                _play_fallback(url)
+            else:
+                print("音频播放完成")
+                
+        except subprocess.TimeoutExpired:
+            print("音频播放超时")
+        except Exception as e:
+            print(f"播放音频失败: {e}")
+    
+    def _play_fallback(fallback_url: str):
+        """备用播放方式：下载后播放"""
+        try:
+            # 下载音频文件
+            response = requests.get(fallback_url, timeout=10)
             response.raise_for_status()
             
-            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
+            # 创建临时文件
+            with tempfile.NamedTemporaryFile(suffix='.audio', delete=False, delete_on_close=False) as f:
                 f.write(response.content)
                 temp_path = f.name
             
-            subprocess.run(['mpg123', '-q', temp_path], capture_output=True)
+            # 使用ffplay播放本地文件
+            result = subprocess.run([
+                'ffplay', 
+                '-autoexit', 
+                '-nodisp', 
+                '-loglevel', 'quiet',
+                temp_path
+            ], capture_output=True, timeout=30)
+            
+            # 清理临时文件
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+                
+            if result.returncode != 0:
+                print(f"备用播放方式也失败，返回码: {result.returncode}")
+            else:
+                print("备用播放方式成功")
+                
         except Exception as e:
-            print(f"Failed to play audio: {e}")
+            print(f"备用播放方式失败: {e}")
     
+    # 在新线程中播放音频，避免阻塞UI
     threading.Thread(target=_play, daemon=True).start()
 
 
@@ -386,27 +448,49 @@ class DictionaryApp:
         
         # 检查是否为多单词短语
         is_phrase = data.get("is_phrase", False)
+        result_type = data.get("result_type", "")
         
         if is_phrase:
             # 显示短语翻译结果
             translation = data.get("translation", "")
             from_lang = data.get("from_language", "")
             to_lang = data.get("to_language", "")
+            suggestion = data.get("suggestion", "")
             
             if translation:
                 translation_frame = Frame(self.scrollable_frame)
                 translation_frame.pack(fill=X, pady=10)
                 
-                Label(translation_frame, text="翻译:", font=("Arial", 12, "bold")).pack(anchor=W)
+                # 根据结果类型显示不同的标题
+                if result_type == "phrase_translation":
+                    Label(translation_frame, text="翻译:", font=("Arial", 12, "bold")).pack(anchor=W)
+                elif result_type == "keyword_detection":
+                    Label(translation_frame, text="提示:", font=("Arial", 12, "bold"), fg="orange").pack(anchor=W)
                 
-                trans_label = Label(translation_frame, text=translation, 
-                                  font=("Arial", 14), fg="#333", wraplength=450, justify=LEFT)
-                trans_label.pack(anchor=W, pady=(5, 0))
+                # 创建翻译文本和播放按钮的框架
+                trans_text_frame = Frame(translation_frame)
+                trans_text_frame.pack(fill=X, anchor=W)
+                
+                trans_label = Label(trans_text_frame, text=translation, 
+                                  font=("Arial", 14), fg="#333", wraplength=400, justify=LEFT)
+                trans_label.pack(side=LEFT, anchor=W)
+                
+                # 为短语翻译添加播放按钮（如果有TTS音频）
+                ph_tts_mp3 = data.get("symbols", {}).get("ph_tts_mp3", "")
+                if ph_tts_mp3:
+                    play_btn = Button(trans_text_frame, text="🔊", fg="green", cursor="hand2",
+                                     font=("Arial", 12), command=lambda: play_audio(ph_tts_mp3))
+                    play_btn.pack(side=LEFT, padx=(10, 0))
                 
                 if from_lang and to_lang:
                     lang_label = Label(translation_frame, text=f"{from_lang} → {to_lang}", 
                                      font=("Arial", 10), fg="#666")
                     lang_label.pack(anchor=W)
+                
+                if suggestion:
+                    suggest_label = Label(translation_frame, text=suggestion, 
+                                        font=("Arial", 11), fg="blue", wraplength=450, justify=LEFT)
+                    suggest_label.pack(anchor=W, pady=(5, 0))
         else:
             # 单个单词的显示逻辑
             symbols = data.get("symbols", {})
@@ -420,6 +504,7 @@ class DictionaryApp:
                 ph_am = symbols.get("ph_am", "")
                 ph_en_mp3 = symbols.get("ph_en_mp3", "")
                 ph_am_mp3 = symbols.get("ph_am_mp3", "")
+                ph_tts_mp3 = symbols.get("ph_tts_mp3", "")
                 
                 if ph_en or ph_am:
                     pron_frame = Frame(self.scrollable_frame)
@@ -434,6 +519,12 @@ class DictionaryApp:
                         am_btn = Button(pron_frame, text=f"AM: {ph_am}", fg="blue", cursor="hand2",
                                        font=("Arial", 11), command=lambda: play_audio(ph_am_mp3))
                         am_btn.pack(side=LEFT, padx=5)
+                    
+                    # 添加TTS播放按钮
+                    if ph_tts_mp3:
+                        tts_btn = Button(pron_frame, text="🔊 TTS", fg="green", cursor="hand2",
+                                        font=("Arial", 11), command=lambda: play_audio(ph_tts_mp3))
+                        tts_btn.pack(side=LEFT, padx=5)
                 
                 parts = symbols.get("parts", [])
                 if parts:
@@ -455,6 +546,43 @@ class DictionaryApp:
                             mean_label = Label(meanings_frame, text=means_text, 
                                              font=("Arial", 10), fg="#555", wraplength=450, justify=LEFT)
                             mean_label.pack(anchor=W, padx=(10, 0))
+        
+        # 显示例句（如果有）
+        sentences = data.get("sentences", [])
+        if sentences:
+            sentences_frame = Frame(self.scrollable_frame)
+            sentences_frame.pack(fill=X, pady=10)
+            
+            Label(sentences_frame, text="例句:", font=("Arial", 12, "bold")).pack(anchor=W)
+            
+            for i, sentence in enumerate(sentences[:5]):  # 最多显示5个例句
+                en_text = sentence.get("en", "")
+                cn_text = sentence.get("cn", "")
+                tts_url = sentence.get("ttsUrl", "")
+                
+                if en_text and cn_text:
+                    # 创建例句框架
+                    sentence_frame = Frame(sentences_frame)
+                    sentence_frame.pack(fill=X, pady=5)
+                    
+                    # 英文句子和播放按钮
+                    en_frame = Frame(sentence_frame)
+                    en_frame.pack(fill=X, anchor=W)
+                    
+                    en_label = Label(en_frame, text=f"{i+1}. {en_text}", 
+                                   font=("Arial", 11), fg="#333", wraplength=430, justify=LEFT)
+                    en_label.pack(side=LEFT, anchor=W)
+                    
+                    # 添加例句播放按钮
+                    if tts_url:
+                        play_btn = Button(en_frame, text="🔊", fg="green", cursor="hand2",
+                                         font=("Arial", 10), command=lambda url=tts_url: play_audio(url))
+                        play_btn.pack(side=LEFT, padx=(10, 0))
+                    
+                    # 中文翻译
+                    cn_label = Label(sentence_frame, text=f"   {cn_text}", 
+                                   font=("Arial", 10), fg="#666", wraplength=430, justify=LEFT)
+                    cn_label.pack(anchor=W, padx=(20, 0))
     
     def on_closing(self):
         """窗口关闭时的处理"""
