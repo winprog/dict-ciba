@@ -364,15 +364,297 @@ class DictionaryApp:
     
     def show_window(self):
         """显示窗口"""
+        print("🔍 [show_window] 开始显示窗口")
+        
+        # 记录显示前的窗口状态
+        window_id = self.root.winfo_id()
+        print(f"🔍 [show_window] 窗口ID: {window_id}")
+        print(f"🔍 [show_window] 窗口可见性: {self.window_visible}")
+        
         self.root.deiconify()  # 显示窗口
         self.window_visible = True
         self.hide_btn.config(text="隐藏窗口", bg="lightyellow")
+        
+        # 确保窗口完全显示后再进行桌面移动
+        self.root.update_idletasks()
+        
+        # 记录显示后的窗口状态
+        geometry = self.root.geometry()
+        print(f"🔍 [show_window] 窗口几何位置: {geometry}")
+        
+        # 在多桌面环境中，确保窗口显示在当前工作桌面
+        print("🔍 [show_window] 调度多桌面检查 (100ms后)")
+        self.root.after(100, self._ensure_window_on_current_desktop)  # 延迟100ms确保窗口完全显示
         
         # 取消自动隐藏定时器
         if self.auto_hide_timer:
             self.root.after_cancel(self.auto_hide_timer)
             self.auto_hide_timer = None
-    
+        
+        print("🔍 [show_window] 显示窗口完成")
+
+    def _ensure_window_on_current_desktop(self):
+        """在多桌面环境中确保窗口显示在当前工作桌面"""
+        print("🔍 [_ensure_window_on_current_desktop] 开始多桌面检查")
+        
+        try:
+            # 获取窗口ID（确保窗口已完全初始化）
+            window_id = self.root.winfo_id()
+            print(f"🔍 [_ensure_window_on_current_desktop] 窗口ID: {window_id} (0x{window_id:08x})")
+            
+            # 检查窗口是否有效（非零ID）
+            if window_id == 0:
+                print("⚠️ [_ensure_window_on_current_desktop] 窗口ID为0，窗口可能未完全初始化，延迟重试...")
+                # 延迟重试
+                self.root.after(500, self._ensure_window_on_current_desktop)
+                return
+            
+            # 检查窗口ID是否发生了变化（处理窗口重新映射的情况）
+            if hasattr(self, '_last_window_id') and self._last_window_id != window_id:
+                print(f"🔄 [_ensure_window_on_current_desktop] 窗口ID发生变化: 旧ID={self._last_window_id}, 新ID={window_id}")
+                print("🔍 [_ensure_window_on_current_desktop] 窗口可能被重新映射，更新窗口ID记录")
+                
+                # 窗口ID发生变化时，重新获取窗口列表并查找正确的窗口ID
+                print("🔄 [_ensure_window_on_current_desktop] 重新扫描窗口列表查找正确窗口ID...")
+                import subprocess
+                result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=3)
+                if result.returncode == 0:
+                    window_lines = result.stdout.strip().split('\n')
+                    for wline in window_lines:
+                        if 'Dictionary' in wline:  # 查找包含字典标题的窗口
+                            try:
+                                parts = wline.split()
+                                if len(parts) >= 3:
+                                    wmctrl_window_id_hex = parts[0]
+                                    wmctrl_window_id_int = int(wmctrl_window_id_hex, 16)
+                                    # 检查窗口ID是否接近（可能只是变化了1）
+                                    if abs(wmctrl_window_id_int - window_id) <= 1:
+                                        print(f"🔄 [_ensure_window_on_current_desktop] 找到新窗口ID: {wmctrl_window_id_int} ({wmctrl_window_id_hex})")
+                                        window_id = wmctrl_window_id_int
+                                        break
+                            except (ValueError, IndexError) as e:
+                                print(f"⚠️ [_ensure_window_on_current_desktop] 解析窗口行失败: {wline}, 错误: {e}")
+            
+            # 更新最后记录的窗口ID
+            self._last_window_id = window_id
+            
+            # 记录当前窗口状态
+            geometry = self.root.geometry()
+            print(f"🔍 [_ensure_window_on_current_desktop] 当前窗口几何位置: {geometry}")
+            
+            # 获取鼠标位置（用于确定当前桌面）
+            mouse_x = None
+            mouse_y = None
+            if self.last_mouse_position:
+                mouse_x, mouse_y = self.last_mouse_position
+                print(f"🔍 [_ensure_window_on_current_desktop] 最后取词位置: X={mouse_x}, Y={mouse_y}")
+            
+            # 获取屏幕信息
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            print(f"🔍 [_ensure_window_on_current_desktop] 屏幕尺寸: {screen_width}x{screen_height}")
+            
+            # 方法1: 使用系统wmctrl工具获取当前桌面（Linux）
+            try:
+                import subprocess
+                
+                # 获取当前桌面信息
+                print("🔍 [_ensure_window_on_current_desktop] 获取桌面信息...")
+                result = subprocess.run(['wmctrl', '-d'], 
+                                      capture_output=True, text=True, timeout=3)
+                if result.returncode == 0:
+                    print(f"🔍 [_ensure_window_on_current_desktop] 桌面信息:\n{result.stdout}")
+                    lines = result.stdout.strip().split('\n')
+                    
+                    current_desktop_num = None
+                    desktop_count = len(lines)
+                    print(f"🔍 [_ensure_window_on_current_desktop] 桌面数量: {desktop_count}")
+                    
+                    for line in lines:
+                        if '*' in line:  # 当前桌面有*标记
+                            parts = line.split()
+                            current_desktop_num = parts[0]  # 桌面编号
+                            
+                            print(f"🔍 [_ensure_window_on_current_desktop] 检测到当前桌面: {current_desktop_num}")
+                            print(f"🔍 [_ensure_window_on_current_desktop] 桌面详情: {line}")
+                            break
+                    
+                    if current_desktop_num:
+                        # 首先检查窗口是否已经在目标桌面
+                        print("🔍 [_ensure_window_on_current_desktop] 检查窗口当前桌面...")
+                        result = subprocess.run(['wmctrl', '-l'], 
+                                              capture_output=True, text=True, timeout=3)
+                        if result.returncode == 0:
+                            window_lines = result.stdout.strip().split('\n')
+                            print(f"🔍 [_ensure_window_on_current_desktop] 窗口列表: {len(window_lines)} 个窗口")
+                            
+                            window_found = False
+                            window_current_desktop = None
+                            
+                            for wline in window_lines:
+                                # 解析wmctrl输出的窗口ID（十六进制字符串转整数）
+                                try:
+                                    parts = wline.split()
+                                    if len(parts) >= 3:
+                                        wmctrl_window_id_hex = parts[0]  # 如 "0x01200040"
+                                        wmctrl_desktop = parts[1]       # 如 "1"
+                                        
+                                        # 将十六进制字符串转换为整数进行比较
+                                        wmctrl_window_id_int = int(wmctrl_window_id_hex, 16)
+                                        
+                                        print(f"🔍 [_ensure_window_on_current_desktop] 匹配窗口ID: 期望={window_id}(0x{window_id:08x}), 实际={wmctrl_window_id_int}({wmctrl_window_id_hex}), 桌面={wmctrl_desktop}")
+                                        
+                                        # 允许窗口ID有小的变化（窗口可能被重新映射）
+                                        if wmctrl_window_id_int == window_id or abs(wmctrl_window_id_int - window_id) <= 1:
+                                            window_found = True
+                                            window_current_desktop = wmctrl_desktop
+                                            
+                                            # 如果ID有变化，更新为实际的窗口ID
+                                            if wmctrl_window_id_int != window_id:
+                                                print(f"🔄 [_ensure_window_on_current_desktop] 窗口ID已更新: {window_id} -> {wmctrl_window_id_int}")
+                                                window_id = wmctrl_window_id_int
+                                            
+                                            print(f"🔍 [_ensure_window_on_current_desktop] 找到窗口信息: {wline}")
+                                            print(f"🔍 [_ensure_window_on_current_desktop] 窗口当前桌面: {window_current_desktop}")
+                                            print(f"🔍 [_ensure_window_on_current_desktop] 目标桌面: {current_desktop_num}")
+                                            
+                                            if window_current_desktop == current_desktop_num:
+                                                print(f"✅ [_ensure_window_on_current_desktop] 窗口已在目标桌面 {current_desktop_num}")
+                                                # 只需激活窗口
+                                                print("🔍 [_ensure_window_on_current_desktop] 激活窗口...")
+                                                subprocess.run(['wmctrl', '-i', '-a', str(window_id)],
+                                                             timeout=2)
+                                                return
+                                            else:
+                                                print(f"🔍 [_ensure_window_on_current_desktop] 窗口不在目标桌面，需要移动")
+                                                print(f"🔍 [_ensure_window_on_current_desktop] 从桌面 {window_current_desktop} 移动到桌面 {current_desktop_num}")
+                                                break
+                                except (ValueError, IndexError) as e:
+                                    print(f"⚠️ [_ensure_window_on_current_desktop] 解析窗口行失败: {wline}, 错误: {e}")
+                                    continue
+                            
+                            if not window_found:
+                                print("⚠️ [_ensure_window_on_current_desktop] 在窗口列表中未找到当前窗口")
+                                print(f"🔍 [_ensure_window_on_current_desktop] 查找窗口ID: {window_id}")
+                                print(f"🔍 [_ensure_window_on_current_desktop] 窗口列表: {window_lines}")
+                            
+                            # 将窗口移动到当前桌面
+                            if window_current_desktop and window_current_desktop != current_desktop_num:
+                                print(f"🔄 [_ensure_window_on_current_desktop] 正在移动窗口到桌面 {current_desktop_num}...")
+                                result = subprocess.run(['wmctrl', '-i', '-r', 
+                                               str(window_id), '-t', current_desktop_num],
+                                              capture_output=True, text=True, timeout=3)
+                                
+                                print(f"🔍 [_ensure_window_on_current_desktop] 移动命令返回码: {result.returncode}")
+                                if result.stdout:
+                                    print(f"🔍 [_ensure_window_on_current_desktop] 移动命令输出: {result.stdout}")
+                                if result.stderr:
+                                    print(f"🔍 [_ensure_window_on_current_desktop] 移动命令错误: {result.stderr}")
+                                
+                                if result.returncode == 0:
+                                    print(f"✅ [_ensure_window_on_current_desktop] 使用wmctrl移动窗口到桌面 {current_desktop_num}")
+                                    
+                                    # 激活窗口确保显示
+                                    print("🔍 [_ensure_window_on_current_desktop] 激活窗口...")
+                                    subprocess.run(['wmctrl', '-i', '-a', str(window_id)],
+                                                 timeout=2)
+                                    
+                                    # 强制窗口重绘
+                                    print("🔍 [_ensure_window_on_current_desktop] 强制窗口重绘...")
+                                    self.root.update_idletasks()
+                                    self.root.deiconify()
+                                    
+                                    # 验证移动结果
+                                    print("🔍 [_ensure_window_on_current_desktop] 验证移动结果...")
+                                    result = subprocess.run(['wmctrl', '-l'], 
+                                                          capture_output=True, text=True, timeout=2)
+                                    if result.returncode == 0:
+                                        window_lines = result.stdout.strip().split('\n')
+                                        for wline in window_lines:
+                                            if str(window_id) in wline:
+                                                current_desktop = wline.split()[1]
+                                                print(f"🔍 [_ensure_window_on_current_desktop] 验证结果: 窗口现在在桌面 {current_desktop}")
+                                                break
+                                    
+                                    return
+                                else:
+                                    print(f"❌ [_ensure_window_on_current_desktop] wmctrl移动失败")
+                            else:
+                                print(f"ℹ️ [_ensure_window_on_current_desktop] 窗口已在正确桌面 {current_desktop_num}，无需移动")
+                                
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"⚠️ [_ensure_window_on_current_desktop] wmctrl异常: {e}")
+                print(f"🔍 [_ensure_window_on_current_desktop] 错误类型: {type(e)}")
+                
+            # 方法2: 使用xdotool作为备用方案（仅在wmctrl失败时使用）
+            try:
+                import subprocess
+                
+                # 只有在wmctrl没有找到窗口时才使用xdotool
+                if mouse_x is not None and current_desktop_num is None:
+                    print(f"🔍 [_ensure_window_on_current_desktop] 使用xdotool作为备用方案...")
+                    print(f"🔍 [_ensure_window_on_current_desktop] 鼠标位置: X={mouse_x}")
+                    
+                    # 获取屏幕宽度
+                    print(f"🔍 [_ensure_window_on_current_desktop] 屏幕宽度: {screen_width}")
+                    
+                    # 获取桌面数量
+                    result = subprocess.run(['xdotool', 'get_num_desktops'], 
+                                          capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        num_desktops = int(result.stdout.strip())
+                        print(f"🔍 [_ensure_window_on_current_desktop] 桌面数量: {num_desktops}")
+                        
+                        if num_desktops > 1:
+                            # 计算当前桌面（基于鼠标位置）
+                            desktop_width = screen_width // num_desktops
+                            calculated_desktop = mouse_x // desktop_width
+                            
+                            # 修正计算：确保桌面编号在有效范围内
+                            calculated_desktop = max(0, min(calculated_desktop, num_desktops - 1))
+                            
+                            print(f"🔍 [_ensure_window_on_current_desktop] 桌面宽度: {desktop_width}")
+                            print(f"🔍 [_ensure_window_on_current_desktop] 计算得到的桌面: {calculated_desktop}")
+                            
+                            # 使用xdotool设置窗口桌面
+                            print(f"🔄 [_ensure_window_on_current_desktop] 使用xdotool移动窗口到桌面 {calculated_desktop}")
+                            result = subprocess.run(['xdotool', 'set_desktop_for_window', 
+                                                       str(window_id), str(calculated_desktop)],
+                                                      capture_output=True, text=True, timeout=2)
+                            
+                            print(f"🔍 [_ensure_window_on_current_desktop] xdotool命令返回码: {result.returncode}")
+                            if result.stdout:
+                                print(f"🔍 [_ensure_window_on_current_desktop] xdotool输出: {result.stdout}")
+                            if result.stderr:
+                                print(f"🔍 [_ensure_window_on_current_desktop] xdotool错误: {result.stderr}")
+                            
+                            if result.returncode == 0:
+                                print(f"✅ [_ensure_window_on_current_desktop] 使用xdotool移动窗口到桌面 {calculated_desktop}")
+                                
+                                # 激活窗口
+                                subprocess.run(['xdotool', 'windowactivate', str(window_id)],
+                                             timeout=2)
+                                
+                                return
+                            else:
+                                print(f"❌ [_ensure_window_on_current_desktop] xdotool移动失败")
+                        else:
+                            print("ℹ️ [_ensure_window_on_current_desktop] 只有一个桌面，无需移动")
+                    else:
+                        print(f"❌ [_ensure_window_on_current_desktop] 无法获取桌面数量")
+                        
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"⚠️ [_ensure_window_on_current_desktop] xdotool异常: {e}")
+                
+            print("ℹ️ [_ensure_window_on_current_desktop] 多桌面支持: 使用默认窗口管理")
+            
+        except Exception as e:
+            print(f"⚠️ [_ensure_window_on_current_desktop] 多桌面处理异常: {e}")
+            import traceback
+            print(f"⚠️ [_ensure_window_on_current_desktop] 详细错误: {traceback.format_exc()}")
+        
+        print("🔍 [_ensure_window_on_current_desktop] 多桌面检查完成")
+
     def on_focus_in(self, event=None):
         """窗口获得焦点时的处理"""
         # 取消自动隐藏定时器
@@ -480,6 +762,8 @@ class DictionaryApp:
     
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
+        print(f"🔍 [_process_captured_word] 开始处理捕获的单词: '{word}'")
+        
         # 状态管理器已经处理了单词比较，这里直接处理新单词
         print(f"DEBUG DictionaryApp: 处理新单词 '{word}'")
         
@@ -487,19 +771,23 @@ class DictionaryApp:
         self.word_state_manager.update_current_word(word)
         
         # 显示窗口（只根据取词状态决定）
+        print("🔍 [_process_captured_word] 调用show_window()")
         self.show_window()
         
         # 智能调整窗口位置，避免遮挡取词位置
+        print("🔍 [_process_captured_word] 调用adjust_window_position()")
         self.adjust_window_position()
         
         # 临时置顶窗口以便查看结果
         self.root.attributes('-topmost', True)
+        print("🔍 [_process_captured_word] 窗口已置顶")
         
         # 更新输入框（只有不同单词才更新）
         self.entry.delete(0, END)
         self.entry.insert(0, word)
         
         # 自动搜索
+        print("🔍 [_process_captured_word] 开始自动搜索")
         self.search()
         
         # 显示捕获提示
@@ -507,6 +795,8 @@ class DictionaryApp:
         
         # 3秒后取消置顶（如果用户没有手动置顶）
         self.root.after(3000, self._restore_window_state)
+        
+        print("🔍 [_process_captured_word] 单词处理完成")
     
     def _restore_window_state(self):
         """恢复窗口状态"""
