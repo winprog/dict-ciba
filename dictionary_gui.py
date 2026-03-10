@@ -150,6 +150,14 @@ class DictionaryApp:
                                  font=("Arial", 10), fg="gray")
         self.status_label.pack(side=LEFT, padx=10)
         
+        # 鼠标悬停取词选项
+        self.enable_hover_var = BooleanVar(value=False)  # 默认禁用鼠标悬停
+        self.hover_check = Checkbutton(self.top_frame, text="启用鼠标悬停取词",
+                                       variable=self.enable_hover_var,
+                                       font=("Arial", 9),
+                                       command=self.toggle_hover_capture)
+        self.hover_check.pack(side=LEFT, padx=10)
+        
         # 窗口控制按钮
         self.window_btn = Button(self.top_frame, text="置顶显示", 
                                 command=self.toggle_window_topmost,
@@ -199,15 +207,28 @@ class DictionaryApp:
         # 窗口关闭时停止取词服务
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
+    def toggle_hover_capture(self):
+        """切换鼠标悬停取词设置"""
+        if self.capture_mode:
+            # 如果取词模式正在运行，需要重启服务以应用新设置
+            stop_service()
+            time.sleep(0.1)  # 短暂等待确保服务完全停止
+            start_service(enable_mouse_hover=self.enable_hover_var.get())
+            
+            status_text = "运行中" if self.enable_hover_var.get() else "运行中(仅选中取词)"
+            self.status_label.config(text=f"取词模式: {status_text}")
+    
     def toggle_capture_mode(self):
         """切换取词模式"""
         if not self.capture_mode:
             # 启动取词模式
             try:
-                start_service()
+                start_service(enable_mouse_hover=self.enable_hover_var.get())
                 self.capture_mode = True
                 self.capture_btn.config(text="停止取词模式", bg="lightcoral")
-                self.status_label.config(text="取词模式: 运行中", fg="green")
+                
+                status_text = "运行中" if self.enable_hover_var.get() else "运行中(仅选中取词)"
+                self.status_label.config(text=f"取词模式: {status_text}", fg="green")
             except Exception as e:
                 messagebox.showerror("错误", f"启动取词服务失败: {e}")
         else:
