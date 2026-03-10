@@ -24,6 +24,18 @@ def play_audio(url: str):
         print("音频URL为空，无法播放")
         return
     
+    # 记录音频URL，方便调试
+    print(f"🔊 播放音频请求 - URL: {url}")
+    print(f"🔊 音频URL类型: {'网络URL' if url.startswith('http') else '本地文件'}")
+    
+    # 如果是网络URL，检查URL格式
+    if url.startswith('http'):
+        print(f"🔊 网络音频URL格式检查: {'有效' if '://' in url else '可能无效'}")
+        if len(url) > 200:
+            print(f"🔊 URL过长，截断显示: {url[:200]}...")
+        else:
+            print(f"🔊 完整URL: {url}")
+    
     def _play():
         try:
             # 检查ffplay是否可用
@@ -36,6 +48,7 @@ def play_audio(url: str):
             # -autoexit: 播放完成后自动退出
             # -nodisp: 不显示视频窗口
             # -loglevel quiet: 静默模式，不输出日志
+            print("🔊 开始使用ffplay播放网络音频...")
             result = subprocess.run([
                 'ffplay', 
                 '-autoexit', 
@@ -45,35 +58,58 @@ def play_audio(url: str):
             ], capture_output=True, timeout=30)
             
             if result.returncode != 0:
-                print(f"音频播放失败，返回码: {result.returncode}")
+                print(f"🔊 音频播放失败，返回码: {result.returncode}")
                 if result.stderr:
                     error_msg = result.stderr.decode('utf-8', errors='ignore')
-                    print(f"错误信息: {error_msg[:200]}")  # 只显示前200字符
+                    print(f"🔊 错误信息: {error_msg}")
+                    
+                    # 分析常见错误
+                    if "Connection refused" in error_msg:
+                        print("🔊 错误类型: 连接被拒绝 - 网络问题或服务器不可用")
+                    elif "404" in error_msg:
+                        print("🔊 错误类型: 404 Not Found - 音频文件不存在")
+                    elif "403" in error_msg:
+                        print("🔊 错误类型: 403 Forbidden - 访问被拒绝")
+                    elif "timed out" in error_msg.lower():
+                        print("🔊 错误类型: 连接超时 - 网络延迟或服务器响应慢")
+                    elif "no such file" in error_msg.lower():
+                        print("🔊 错误类型: 文件不存在 - URL可能无效")
+                    else:
+                        print("🔊 错误类型: 未知错误")
                 
                 # 如果ffplay失败，回退到下载+播放的方式
-                print("尝试使用备用播放方式...")
+                print("🔊 尝试使用备用播放方式...")
                 _play_fallback(url)
             else:
-                print("音频播放完成")
+                print("🔊 音频播放完成")
                 
         except subprocess.TimeoutExpired:
-            print("音频播放超时")
+            print("🔊 音频播放超时 - ffplay进程运行超过30秒")
+            print(f"🔊 超时URL: {url}")
         except Exception as e:
-            print(f"播放音频失败: {e}")
+            print(f"🔊 播放音频失败: {e}")
+            print(f"🔊 失败URL: {url}")
+            import traceback
+            print(f"🔊 详细错误信息: {traceback.format_exc()}")
     
     def _play_fallback(fallback_url: str):
         """备用播放方式：下载后播放"""
+        print(f"🔊 开始备用播放方式 - URL: {fallback_url}")
         try:
             # 下载音频文件
+            print("🔊 开始下载音频文件...")
             response = requests.get(fallback_url, timeout=10)
             response.raise_for_status()
+            print(f"🔊 下载成功，文件大小: {len(response.content)} bytes")
             
             # 创建临时文件
             with tempfile.NamedTemporaryFile(suffix='.audio', delete=False, delete_on_close=False) as f:
                 f.write(response.content)
                 temp_path = f.name
+            print(f"🔊 临时文件创建成功: {temp_path}")
             
             # 使用ffplay播放本地文件
+            print("🔊 开始播放本地音频文件...")
             result = subprocess.run([
                 'ffplay', 
                 '-autoexit', 
@@ -85,16 +121,23 @@ def play_audio(url: str):
             # 清理临时文件
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+                print("🔊 临时文件已清理")
+            except Exception as e:
+                print(f"🔊 清理临时文件失败: {e}")
                 
             if result.returncode != 0:
-                print(f"备用播放方式也失败，返回码: {result.returncode}")
+                print(f"🔊 备用播放方式失败，返回码: {result.returncode}")
+                if result.stderr:
+                    error_msg = result.stderr.decode('utf-8', errors='ignore')
+                    print(f"🔊 备用播放错误信息: {error_msg}")
             else:
-                print("备用播放方式成功")
+                print("🔊 备用播放方式成功")
                 
+        except requests.exceptions.RequestException as e:
+            print(f"🔊 下载音频文件失败: {e}")
+            print(f"🔊 下载失败URL: {fallback_url}")
         except Exception as e:
-            print(f"备用播放方式失败: {e}")
+            print(f"🔊 备用播放方式失败: {e}")
     
     # 在新线程中播放音频，避免阻塞UI
     threading.Thread(target=_play, daemon=True).start()
@@ -195,6 +238,65 @@ class DictionaryApp:
         
         self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        # 绑定鼠标滚轮事件到整个窗口，确保一致的滚动行为
+        def _on_mousewheel(event):
+            """处理鼠标滚轮事件"""
+            # 正确的滚轮事件处理逻辑：
+            # 向上滚动 (event.delta > 0): 视图向上移动，使用负数
+            # 向下滚动 (event.delta < 0): 视图向下移动，使用正数
+            delta = -1 * (event.delta // 120)  # 标准化滚轮值
+            # 滚动Canvas
+            self.canvas.yview_scroll(delta, "units")
+            
+            # 调试信息
+            print(f"🔍 滚轮事件: delta={event.delta}, 滚动量={delta}")
+            
+            # 返回"break"阻止事件进一步传播
+            return "break"
+        
+        def _on_linux_mousewheel(event):
+            """处理Linux鼠标滚轮事件"""
+            # Linux系统使用Button-4和Button-5事件
+            if event.num == 4:
+                # 向上滚动
+                self.canvas.yview_scroll(-1, "units")
+                print("🔍 Linux滚轮事件: 向上滚动")
+            elif event.num == 5:
+                # 向下滚动
+                self.canvas.yview_scroll(1, "units")
+                print("🔍 Linux滚轮事件: 向下滚动")
+            
+            # 返回"break"阻止事件进一步传播
+            return "break"
+        
+        # 使用bind_all绑定到整个应用程序，确保所有组件都能接收滚轮事件
+        self.root.bind_all("<MouseWheel>", _on_mousewheel)
+        self.root.bind_all("<Button-4>", _on_linux_mousewheel)  # Linux向上滚动
+        self.root.bind_all("<Button-5>", _on_linux_mousewheel)  # Linux向下滚动
+        
+        # 为Canvas启用焦点，确保能接收滚轮事件
+        self.canvas.focus_set()
+        
+        # 为Canvas绑定滚轮事件，确保能接收事件
+        self.canvas.bind("<MouseWheel>", _on_mousewheel)
+        self.canvas.bind("<Button-4>", _on_linux_mousewheel)
+        self.canvas.bind("<Button-5>", _on_linux_mousewheel)
+        
+        # 为滚动条绑定滚轮事件
+        self.scrollbar.bind("<MouseWheel>", _on_mousewheel)
+        self.scrollbar.bind("<Button-4>", _on_linux_mousewheel)
+        self.scrollbar.bind("<Button-5>", _on_linux_mousewheel)
+        
+        # 为结果框架绑定滚轮事件
+        self.result_frame.bind("<MouseWheel>", _on_mousewheel)
+        self.result_frame.bind("<Button-4>", _on_linux_mousewheel)
+        self.result_frame.bind("<Button-5>", _on_linux_mousewheel)
+        
+        # 为可滚动框架绑定滚轮事件
+        self.scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
+        self.scrollable_frame.bind("<Button-4>", _on_linux_mousewheel)
+        self.scrollable_frame.bind("<Button-5>", _on_linux_mousewheel)
         
         self.canvas.pack(side=LEFT, fill=BOTH, expand=True)
         self.scrollbar.pack(side=RIGHT, fill=Y)
@@ -586,24 +688,72 @@ class DictionaryApp:
                     sentence_frame = Frame(sentences_frame)
                     sentence_frame.pack(fill=X, pady=5)
                     
-                    # 英文句子和播放按钮
+                    # 为动态创建的例句框架绑定滚轮事件
+                    self._bind_wheel_to_frame(sentence_frame)
+                    
+                    # 英文句子和播放按钮（播放按钮在前）
                     en_frame = Frame(sentence_frame)
                     en_frame.pack(fill=X, anchor=W)
+                    
+                    # 为英文句子框架绑定滚轮事件
+                    self._bind_wheel_to_frame(en_frame)
+                    
+                    # 添加例句播放按钮（放在句子前面）
+                    if tts_url:
+                        play_btn = Button(en_frame, text="🔊", fg="green", cursor="hand2",
+                                         font=("Arial", 10), width=1, height=1,
+                                         command=lambda url=tts_url: play_audio(url))
+                        play_btn.pack(side=LEFT, padx=(0, 5))
+                        
+                        # 为播放按钮绑定滚轮事件
+                        self._bind_wheel_to_widget(play_btn)
                     
                     en_label = Label(en_frame, text=f"{i+1}. {en_text}", 
                                    font=("Arial", 11), fg="#333", wraplength=430, justify=LEFT)
                     en_label.pack(side=LEFT, anchor=W)
                     
-                    # 添加例句播放按钮
-                    if tts_url:
-                        play_btn = Button(en_frame, text="🔊", fg="green", cursor="hand2",
-                                         font=("Arial", 10), command=lambda url=tts_url: play_audio(url))
-                        play_btn.pack(side=LEFT, padx=(10, 0))
+                    # 为标签绑定滚轮事件
+                    self._bind_wheel_to_widget(en_label)
                     
                     # 中文翻译
                     cn_label = Label(sentence_frame, text=f"   {cn_text}", 
                                    font=("Arial", 10), fg="#666", wraplength=430, justify=LEFT)
                     cn_label.pack(anchor=W, padx=(20, 0))
+                    
+                    # 为中文标签绑定滚轮事件
+                    self._bind_wheel_to_widget(cn_label)
+    
+    def _bind_wheel_to_frame(self, frame):
+        """为框架绑定滚轮事件"""
+        def _on_frame_mousewheel(event):
+            """处理框架内的鼠标滚轮事件"""
+            # 正确的滚轮事件处理逻辑：
+            # 向上滚动 (event.delta > 0): 视图向上移动，使用负数
+            # 向下滚动 (event.delta < 0): 视图向下移动，使用正数
+            delta = -1 * (event.delta // 120)  # 标准化滚轮值
+            # 滚动Canvas
+            self.canvas.yview_scroll(delta, "units")
+        
+        # 绑定滚轮事件到框架
+        frame.bind("<MouseWheel>", _on_frame_mousewheel)
+        frame.bind("<Button-4>", _on_frame_mousewheel)  # Linux向上滚动
+        frame.bind("<Button-5>", _on_frame_mousewheel)  # Linux向下滚动
+    
+    def _bind_wheel_to_widget(self, widget):
+        """为小部件绑定滚轮事件"""
+        def _on_widget_mousewheel(event):
+            """处理小部件内的鼠标滚轮事件"""
+            # 正确的滚轮事件处理逻辑：
+            # 向上滚动 (event.delta > 0): 视图向上移动，使用负数
+            # 向下滚动 (event.delta < 0): 视图向下移动，使用正数
+            delta = -1 * (event.delta // 120)  # 标准化滚轮值
+            # 滚动Canvas
+            self.canvas.yview_scroll(delta, "units")
+        
+        # 绑定滚轮事件到小部件
+        widget.bind("<MouseWheel>", _on_widget_mousewheel)
+        widget.bind("<Button-4>", _on_widget_mousewheel)  # Linux向上滚动
+        widget.bind("<Button-5>", _on_widget_mousewheel)  # Linux向下滚动
     
     def on_closing(self):
         """窗口关闭时的处理"""
