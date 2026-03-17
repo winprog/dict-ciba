@@ -9,21 +9,21 @@ import re
 from pathlib import Path
 import logging
 
+CACHE_DIR = Path.home() / ".cache" / "word-capture"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+LAST_WORD_FILE = CACHE_DIR / "last_word.txt"
+PID_FILE = CACHE_DIR / "service.pid"
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(str(Path.home() / ".cache" / "word-capture" / "service.log")),
+        logging.FileHandler(str(CACHE_DIR / "service.log")),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
-
-CACHE_DIR = Path.home() / ".cache" / "word-capture"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-LAST_WORD_FILE = CACHE_DIR / "last_word.txt"
-PID_FILE = CACHE_DIR / "service.pid"
 
 
 def check_dependencies():
