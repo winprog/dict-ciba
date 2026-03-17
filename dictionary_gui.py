@@ -236,8 +236,11 @@ class DictionaryApp:
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
         
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas_window_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        # 绑定画布大小变化事件
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
         
         # 绑定鼠标滚轮事件到整个窗口，确保一致的滚动行为
         def _on_mousewheel(event):
@@ -308,6 +311,9 @@ class DictionaryApp:
         
         # 窗口关闭时停止取词服务
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # 初始化换行标签列表
+        self.wraplength_labels = []
     
     def toggle_hover_capture(self):
         """切换鼠标悬停取词设置"""
@@ -1002,6 +1008,9 @@ class DictionaryApp:
                                    font=("Arial", 11), fg="#333", wraplength=430, justify=LEFT)
                     en_label.pack(side=LEFT, anchor=W)
                     
+                    # 记录标签用于动态调整换行
+                    self.wraplength_labels.append((en_label, "sentence"))
+                    
                     # 为标签绑定滚轮事件
                     self._bind_wheel_to_widget(en_label)
                     
@@ -1009,6 +1018,9 @@ class DictionaryApp:
                     cn_label = Label(sentence_frame, text=f"   {cn_text}", 
                                    font=("Arial", 10), fg="#666", wraplength=430, justify=LEFT)
                     cn_label.pack(anchor=W, padx=(20, 0))
+                    
+                    # 记录标签用于动态调整换行
+                    self.wraplength_labels.append((cn_label, "sentence"))
                     
                     # 为中文标签绑定滚轮事件
                     self._bind_wheel_to_widget(cn_label)
@@ -1045,6 +1057,44 @@ class DictionaryApp:
         widget.bind("<Button-4>", _on_widget_mousewheel)  # Linux向上滚动
         widget.bind("<Button-5>", _on_widget_mousewheel)  # Linux向下滚动
     
+    def _on_canvas_resize(self, event):
+        """当画布大小变化时，更新可滚动框架和内容"""
+        if hasattr(self, 'canvas_window_id') and self.canvas_window_id:
+            # 获取画布新宽度和高度
+            new_width = event.width
+            new_height = event.height
+            
+            # 设置可滚动框架的宽度以匹配画布宽度（减去滚动条宽度）
+            scrollbar_width = 20
+            frame_width = max(400, new_width - scrollbar_width)
+            self.scrollable_frame.config(width=frame_width)
+            
+            # 更新canvas窗口尺寸
+            self.canvas.itemconfigure(self.canvas_window_id, width=frame_width)
+            
+            # 强制更新布局
+            self.scrollable_frame.update_idletasks()
+            
+            # 如果有内容，更新所有文本标签的换行长度
+            if hasattr(self, 'wraplength_labels') and self.wraplength_labels:
+                # 获取新的换行长度
+                new_wraplength = max(400, frame_width - 20)  # 减去边距
+                new_sentence_wraplength = new_wraplength - 30  # 例句文本稍小一点
+                
+                # 更新每个标签的换行长度
+                for label, label_type in self.wraplength_labels:
+                    if label.winfo_exists():
+                        if label_type == "sentence":
+                            label.config(wraplength=new_sentence_wraplength)
+                        else:
+                            label.config(wraplength=new_wraplength)
+            
+            # 更新滚动区域
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            
+            # 强制重绘
+            self.canvas.update_idletasks()
+
     def on_closing(self):
         """窗口关闭时的处理"""
         if self.capture_mode:
