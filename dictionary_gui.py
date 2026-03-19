@@ -152,9 +152,20 @@ class DictionaryApp:
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         
-        # 计算窗口初始位置（屏幕右下角）
-        window_width = 500
-        window_height = 400
+        # 根据屏幕分辨率计算窗口尺寸
+        # 对于高分辨率屏幕(3840x2160)，使用更大的窗口
+        if screen_width >= 3840 and screen_height >= 2160:
+            # 4K屏幕使用大窗口
+            window_width = 820
+            window_height = 600
+        elif screen_width >= 2560:
+            # 2K屏幕使用中等窗口
+            window_width = 650
+            window_height = 500
+        else:
+            # 普通屏幕使用默认尺寸
+            window_width = 500
+            window_height = 400
         x = screen_width - window_width - 50  # 距离右边50像素
         y = screen_height - window_height - 50  # 距离底部50像素
         
@@ -166,6 +177,11 @@ class DictionaryApp:
         self.auto_hide_timer = None
         self.original_geometry = None
         self.last_mouse_position = None  # 记录最后一次取词位置
+        
+        # 记录当前窗口尺寸，用于记忆用户调整的大小
+        # 初始化为默认尺寸
+        self.current_window_width = window_width
+        self.current_window_height = window_height
         
         # 单词状态管理器
         self.word_state_manager = WordStateManager()
@@ -241,6 +257,9 @@ class DictionaryApp:
         
         # 绑定画布大小变化事件
         self.canvas.bind("<Configure>", self._on_canvas_resize)
+        
+        # 绑定窗口大小变化事件，记录窗口尺寸
+        self.root.bind("<Configure>", self._on_window_resize)
         
         # 绑定鼠标滚轮事件到整个窗口，确保一致的滚动行为
         def _on_mousewheel(event):
@@ -377,7 +396,30 @@ class DictionaryApp:
         print(f"🔍 [show_window] 窗口ID: {window_id}")
         print(f"🔍 [show_window] 窗口可见性: {self.window_visible}")
         
+        # 先获取当前位置（如果窗口已存在）
+        current_x = 0
+        current_y = 0
+        try:
+            geometry = self.root.geometry()
+            if geometry and '+' in geometry:
+                parts = geometry.split('+')
+                if len(parts) >= 3:
+                    current_x = int(parts[1])
+                    current_y = int(parts[2])
+        except (ValueError, IndexError):
+            # 如果提取位置失败，使用默认位置
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            current_x = screen_width - self.current_window_width - 50
+            current_y = screen_height - self.current_window_height - 50
+        
+        # 显示窗口并设置为记住的尺寸
         self.root.deiconify()  # 显示窗口
+        
+        # 设置窗口尺寸和位置
+        self.root.geometry(f"{self.current_window_width}x{self.current_window_height}+{current_x}+{current_y}")
+        print(f"🔍 [show_window] 使用记忆的尺寸: {self.current_window_width}x{self.current_window_height}")
+        
         self.window_visible = True
         self.hide_btn.config(text="隐藏窗口", bg="lightyellow")
         
@@ -707,9 +749,9 @@ class DictionaryApp:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         
-        # 获取窗口尺寸
-        window_width = 500
-        window_height = 400
+        # 使用记忆的窗口尺寸
+        window_width = self.current_window_width
+        window_height = self.current_window_height
         
         # 计算安全距离（避免窗口紧贴屏幕边缘）
         margin = 20
@@ -1057,6 +1099,17 @@ class DictionaryApp:
         widget.bind("<Button-4>", _on_widget_mousewheel)  # Linux向上滚动
         widget.bind("<Button-5>", _on_widget_mousewheel)  # Linux向下滚动
     
+    def _on_window_resize(self, event):
+        """当窗口大小变化时，记录新的窗口尺寸"""
+        if event and hasattr(event, 'width') and hasattr(event, 'height'):
+            # 使用初始化时的窗口尺寸作为最小阈值
+            min_width = self.current_window_width
+            min_height = self.current_window_height
+            if event.width >= min_width and event.height >= min_height:
+                # 只有当尺寸大于最小阈值时才更新
+                self.current_window_width = event.width
+                self.current_window_height = event.height
+    
     def _on_canvas_resize(self, event):
         """当画布大小变化时，更新可滚动框架和内容"""
         if hasattr(self, 'canvas_window_id') and self.canvas_window_id:
@@ -1064,12 +1117,14 @@ class DictionaryApp:
             new_width = event.width
             new_height = event.height
             
-            # 设置可滚动框架的宽度以匹配画布宽度（减去滚动条宽度）
+            # 计算实际可用宽度（减去滚动条宽度）
             scrollbar_width = 20
-            frame_width = max(400, new_width - scrollbar_width)
+            frame_width = new_width - scrollbar_width
+            
+            # 设置可滚动框架的宽度以匹配画布宽度
             self.scrollable_frame.config(width=frame_width)
             
-            # 更新canvas窗口尺寸
+            # 更新canvas窗口尺寸，使其填充整个画布宽度
             self.canvas.itemconfigure(self.canvas_window_id, width=frame_width)
             
             # 强制更新布局
@@ -1078,7 +1133,7 @@ class DictionaryApp:
             # 如果有内容，更新所有文本标签的换行长度
             if hasattr(self, 'wraplength_labels') and self.wraplength_labels:
                 # 获取新的换行长度
-                new_wraplength = max(400, frame_width - 20)  # 减去边距
+                new_wraplength = frame_width - 20  # 减去边距
                 new_sentence_wraplength = new_wraplength - 30  # 例句文本稍小一点
                 
                 # 更新每个标签的换行长度
