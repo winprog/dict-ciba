@@ -895,6 +895,9 @@ class DictionaryApp:
         loading_label.destroy()
         self.current_data = data
         self.display_result(data)
+        
+        # 强制触发Canvas resize事件，确保首次显示时正确填充
+        self.root.after(50, self._force_canvas_resize)
     
     def _search_error(self, error, loading_label):
         """处理搜索错误"""
@@ -1099,12 +1102,40 @@ class DictionaryApp:
         widget.bind("<Button-4>", _on_widget_mousewheel)  # Linux向上滚动
         widget.bind("<Button-5>", _on_widget_mousewheel)  # Linux向下滚动
     
+    def _force_canvas_resize(self):
+        """强制触发Canvas resize事件，确保内容正确填充"""
+        if hasattr(self, 'canvas') and hasattr(self, 'canvas_window_id') and self.canvas_window_id:
+            # 获取Canvas的实际宽度
+            canvas_width = self.canvas.winfo_width()
+            if canvas_width > 0:
+                # 计算框架宽度（减去滚动条宽度）
+                scrollbar_width = 20
+                frame_width = max(400, canvas_width - scrollbar_width)
+                
+                # 更新Canvas窗口项宽度
+                self.canvas.itemconfigure(self.canvas_window_id, width=frame_width)
+                self.scrollable_frame.config(width=frame_width)
+                
+                # 更新滚动区域
+                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+                
+                # 更新文本标签的换行长度
+                if hasattr(self, 'wraplength_labels') and self.wraplength_labels:
+                    new_wraplength = frame_width - 20  # 减去边距
+                    new_sentence_wraplength = new_wraplength - 30  # 例句文本稍小一点
+                    for label, label_type in self.wraplength_labels:
+                        if label.winfo_exists():
+                            if label_type == "sentence":
+                                label.config(wraplength=new_sentence_wraplength)
+                            else:
+                                label.config(wraplength=new_wraplength)
+    
     def _on_window_resize(self, event):
         """当窗口大小变化时，记录新的窗口尺寸"""
         if event and hasattr(event, 'width') and hasattr(event, 'height'):
-            # 使用初始化时的窗口尺寸作为最小阈值
-            min_width = self.current_window_width
-            min_height = self.current_window_height
+            # 只记录合理的窗口尺寸（避免记录极小值）
+            min_width = 300
+            min_height = 200
             if event.width >= min_width and event.height >= min_height:
                 # 只有当尺寸大于最小阈值时才更新
                 self.current_window_width = event.width
