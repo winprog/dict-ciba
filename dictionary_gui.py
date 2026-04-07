@@ -1133,9 +1133,9 @@ class DictionaryApp:
     def _on_window_resize(self, event):
         """当窗口大小变化时，记录新的窗口尺寸"""
         if event and hasattr(event, 'width') and hasattr(event, 'height'):
-            # 只记录合理的窗口尺寸（避免记录极小值）
-            min_width = 300
-            min_height = 200
+            # 使用初始化时的窗口尺寸作为最小阈值，确保窗口不会小于初始化大小
+            min_width = self.current_window_width
+            min_height = self.current_window_height
             if event.width >= min_width and event.height >= min_height:
                 # 只有当尺寸大于最小阈值时才更新
                 self.current_window_width = event.width
