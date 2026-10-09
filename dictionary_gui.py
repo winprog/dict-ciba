@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from word_capture_service import get_service, start_service, stop_service, on_capture
 from word_state_manager import WordStateManager
 from iciba import query_word
+from llm_client import chat as llm_chat
 
 
 def play_audio(url: str):
@@ -396,29 +397,58 @@ class DictionaryApp:
         print(f"🔍 [show_window] 窗口ID: {window_id}")
         print(f"🔍 [show_window] 窗口可见性: {self.window_visible}")
         
-        # 先获取当前位置（如果窗口已存在）
-        current_x = 0
-        current_y = 0
-        try:
-            geometry = self.root.geometry()
-            if geometry and '+' in geometry:
-                parts = geometry.split('+')
-                if len(parts) >= 3:
-                    current_x = int(parts[1])
-                    current_y = int(parts[2])
-        except (ValueError, IndexError):
-            # 如果提取位置失败，使用默认位置
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
-            current_x = screen_width - self.current_window_width - 50
-            current_y = screen_height - self.current_window_height - 50
+        window_width = self.current_window_width
+        window_height = self.current_window_height
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        margin = 20
+        offset = 30  # 窗口与鼠标的间距
+        
+        # 根据鼠标位置决定窗口位置（避免遮挡取词点）
+        if self.last_mouse_position:
+            mouse_x, mouse_y = self.last_mouse_position
+            print(f"🔍 [show_window] 根据鼠标位置计算: 鼠标=({mouse_x},{mouse_y}), 屏幕={screen_width}x{screen_height}")
+            
+            # 优先放在鼠标上方
+            if mouse_y - window_height - offset >= margin:
+                x = mouse_x - window_width // 2
+                y = mouse_y - window_height - offset
+            # 否则放鼠标下方
+            elif mouse_y + offset + window_height <= screen_height - margin:
+                x = mouse_x - window_width // 2
+                y = mouse_y + offset
+            # 都不够时放左上角
+            else:
+                x = margin
+                y = margin
+            
+            # 水平边界修正
+            x = max(margin, min(x, screen_width - window_width - margin))
+        else:
+            # 没有鼠标位置，使用记忆的默认位置
+            try:
+                geometry = self.root.geometry()
+                if geometry and '+' in geometry:
+                    parts = geometry.split('+')
+                    if len(parts) >= 3:
+                        x = int(parts[1])
+                        y = int(parts[2])
+                    else:
+                        x = screen_width - window_width - 50
+                        y = screen_height - window_height - 50
+                else:
+                    x = screen_width - window_width - 50
+                    y = screen_height - window_height - 50
+            except (ValueError, IndexError):
+                x = screen_width - window_width - 50
+                y = screen_height - window_height - 50
         
         # 显示窗口并设置为记住的尺寸
         self.root.deiconify()  # 显示窗口
         
         # 设置窗口尺寸和位置
-        self.root.geometry(f"{self.current_window_width}x{self.current_window_height}+{current_x}+{current_y}")
-        print(f"🔍 [show_window] 使用记忆的尺寸: {self.current_window_width}x{self.current_window_height}")
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        print(f"🔍 [show_window] 窗口位置: {window_width}x{window_height}+{x}+{y}")
         
         self.window_visible = True
         self.hide_btn.config(text="隐藏窗口", bg="lightyellow")
@@ -444,6 +474,10 @@ class DictionaryApp:
     def _ensure_window_on_current_desktop(self):
         """在多桌面环境中确保窗口显示在当前工作桌面"""
         print("🔍 [_ensure_window_on_current_desktop] 开始多桌面检查")
+        
+        current_desktop_num = None
+        mouse_x = None
+        mouse_y = None
         
         try:
             # 获取窗口ID（确保窗口已完全初始化）
@@ -822,10 +856,6 @@ class DictionaryApp:
         print("🔍 [_process_captured_word] 调用show_window()")
         self.show_window()
         
-        # 智能调整窗口位置，避免遮挡取词位置
-        print("🔍 [_process_captured_word] 调用adjust_window_position()")
-        self.adjust_window_position()
-        
         # 临时置顶窗口以便查看结果
         self.root.attributes('-topmost', True)
         print("🔍 [_process_captured_word] 窗口已置顶")
@@ -880,13 +910,79 @@ class DictionaryApp:
         loading_label.pack()
         self.root.update()
         
+        is_multi_word = len(word.split()) >= 2
+        is_long_text = len(word) > 80
+
+        def call_llm_translate():
+            loading_label.config(text="LLM 翻译中...")
+            llm_result = llm_chat(
+                prompt=f"请翻译以下文本，只输出翻译结果，不要解释：\n{word}",
+                system_prompt="你是一个中英文互译的翻译助手，能够处理单词、短语、句子和段落。",
+            )
+            return {
+                "word": word,
+                "is_phrase": True,
+                "translation": llm_result.strip(),
+                "result_type": "llm_translation",
+                "from_language": "",
+                "to_language": "",
+            }
+
         # 在新线程中执行搜索
         def search_thread():
+            # 长文本（段落）直接走 LLM，跳过 iciba（iciba 对长文本返回垃圾）
+            if is_long_text:
+                try:
+                    data = call_llm_translate()
+                    result_data = data
+                    self.root.after(0, lambda d=result_data: self._display_result(d, loading_label))
+                except Exception as ex:
+                    err = ex
+                    self.root.after(0, lambda e=err: self._search_error(e, loading_label))
+                return
+
+            # 短文本：先尝试 iciba API
+            iciba_data = None
+            iciba_ok = False
+            iciba_phrase_failed = False
+
             try:
-                data = query_word(word)
-                self.root.after(0, lambda: self._display_result(data, loading_label))
-            except Exception as e:
-                self.root.after(0, lambda: self._search_error(e, loading_label))
+                iciba_data = query_word(word)
+                iciba_ok = True
+                if iciba_data.get("is_phrase") and iciba_data.get("result_type") == "keyword_detection":
+                    iciba_phrase_failed = True
+                elif iciba_data.get("is_phrase") and not iciba_data.get("translation"):
+                    iciba_phrase_failed = True
+                elif iciba_data.get("is_phrase") and iciba_data.get("result_type") != "phrase_translation":
+                    iciba_phrase_failed = True
+            except Exception:
+                pass
+
+            if iciba_ok and not iciba_phrase_failed:
+                result_data = iciba_data
+                self.root.after(0, lambda d=result_data: self._display_result(d, loading_label))
+                return
+
+            # iciba 失败或短语翻译不理想 → 使用 LLM 翻译
+            if is_multi_word:
+                try:
+                    data = call_llm_translate()
+                    result_data = data
+                    self.root.after(0, lambda d=result_data: self._display_result(d, loading_label))
+                except Exception as ex:
+                    err = ex
+                    if iciba_ok:
+                        fallback = iciba_data
+                        self.root.after(0, lambda d=fallback: self._display_result(d, loading_label))
+                    else:
+                        self.root.after(0, lambda e=err: self._search_error(e, loading_label))
+            else:
+                if iciba_ok:
+                    result_data = iciba_data
+                    self.root.after(0, lambda d=result_data: self._display_result(d, loading_label))
+                else:
+                    err_msg = f"未找到单词 '{word}'，且 LLM 仅支持短语翻译"
+                    self.root.after(0, lambda m=err_msg: self._search_error(Exception(m), loading_label))
         
         threading.Thread(target=search_thread, daemon=True).start()
     
@@ -906,14 +1002,34 @@ class DictionaryApp:
     
     def display_result(self, data):
         word = data.get("word", "")
+        result_type = data.get("result_type", "")
+        is_phrase = data.get("is_phrase", False)
         
-        word_label = Label(self.scrollable_frame, text=word, font=("Arial", 24, "bold"))
-        word_label.pack(pady=(0, 10))
+        frame_width = self.scrollable_frame.winfo_width()
+        if frame_width < 100:
+            frame_width = self.current_window_width - 40
+        text_wraplength = frame_width - 20
+        
+        is_long_text = len(word) > 80
+        
+        if is_long_text:
+            word_label = Label(self.scrollable_frame, text=word, 
+                             font=("Arial", 11, "italic"), fg="#666",
+                             wraplength=text_wraplength, justify=LEFT)
+            word_label.pack(anchor=W, pady=(0, 10))
+            sep = Frame(self.scrollable_frame, height=2, bg="#ddd")
+            sep.pack(fill=X, pady=(0, 10))
+        elif is_phrase:
+            word_label = Label(self.scrollable_frame, text=word, 
+                             font=("Arial", 16, "bold"), wraplength=text_wraplength, justify=LEFT)
+            word_label.pack(anchor=W, pady=(0, 10))
+        else:
+            word_label = Label(self.scrollable_frame, text=word, font=("Arial", 24, "bold"))
+            word_label.pack(pady=(0, 10))
+        
+        self.wraplength_labels.append((word_label, "sentence"))
         
         # 检查是否为多单词短语
-        is_phrase = data.get("is_phrase", False)
-        result_type = data.get("result_type", "")
-        
         if is_phrase:
             # 显示短语翻译结果
             translation = data.get("translation", "")
@@ -925,26 +1041,18 @@ class DictionaryApp:
                 translation_frame = Frame(self.scrollable_frame)
                 translation_frame.pack(fill=X, pady=10)
                 
-                # 根据结果类型显示不同的标题
                 if result_type == "phrase_translation":
                     Label(translation_frame, text="翻译:", font=("Arial", 12, "bold")).pack(anchor=W)
+                elif result_type == "llm_translation":
+                    Label(translation_frame, text="AI 翻译:", font=("Arial", 12, "bold"), fg="#1565C0").pack(anchor=W)
                 elif result_type == "keyword_detection":
                     Label(translation_frame, text="提示:", font=("Arial", 12, "bold"), fg="orange").pack(anchor=W)
                 
-                # 创建翻译文本和播放按钮的框架
-                trans_text_frame = Frame(translation_frame)
-                trans_text_frame.pack(fill=X, anchor=W)
-                
-                trans_label = Label(trans_text_frame, text=translation, 
-                                  font=("Arial", 14), fg="#333", wraplength=400, justify=LEFT)
-                trans_label.pack(side=LEFT, anchor=W)
-                
-                # 为短语翻译添加播放按钮（如果有TTS音频）
-                ph_tts_mp3 = data.get("symbols", {}).get("ph_tts_mp3", "")
-                if ph_tts_mp3:
-                    play_btn = Button(trans_text_frame, text="🔊", fg="green", cursor="hand2",
-                                     font=("Arial", 12), command=lambda: play_audio(ph_tts_mp3))
-                    play_btn.pack(side=LEFT, padx=(10, 0))
+                trans_label = Label(translation_frame, text=translation, 
+                                  font=("Arial", 13), fg="#222", 
+                                  wraplength=text_wraplength, justify=LEFT)
+                trans_label.pack(fill=X, anchor=W)
+                self.wraplength_labels.append((trans_label, "sentence"))
                 
                 if from_lang and to_lang:
                     lang_label = Label(translation_frame, text=f"{from_lang} → {to_lang}", 
@@ -953,7 +1061,8 @@ class DictionaryApp:
                 
                 if suggestion:
                     suggest_label = Label(translation_frame, text=suggestion, 
-                                        font=("Arial", 11), fg="blue", wraplength=450, justify=LEFT)
+                                        font=("Arial", 11), fg="blue", 
+                                        wraplength=text_wraplength, justify=LEFT)
                     suggest_label.pack(anchor=W, pady=(5, 0))
         else:
             # 单个单词的显示逻辑
@@ -1008,66 +1117,51 @@ class DictionaryApp:
                             
                             means_text = ", ".join(means[:10])
                             mean_label = Label(meanings_frame, text=means_text, 
-                                             font=("Arial", 10), fg="#555", wraplength=450, justify=LEFT)
+                                             font=("Arial", 10), fg="#555", 
+                                             wraplength=text_wraplength, justify=LEFT)
                             mean_label.pack(anchor=W, padx=(10, 0))
         
         # 显示例句（如果有）
         sentences = data.get("sentences", [])
-        if sentences:
+        if sentences and not is_long_text:
             sentences_frame = Frame(self.scrollable_frame)
             sentences_frame.pack(fill=X, pady=10)
             
             Label(sentences_frame, text="例句:", font=("Arial", 12, "bold")).pack(anchor=W)
             
-            for i, sentence in enumerate(sentences[:5]):  # 最多显示5个例句
+            for i, sentence in enumerate(sentences[:5]):
                 en_text = sentence.get("en", "")
                 cn_text = sentence.get("cn", "")
                 tts_url = sentence.get("ttsUrl", "")
                 
                 if en_text and cn_text:
-                    # 创建例句框架
                     sentence_frame = Frame(sentences_frame)
                     sentence_frame.pack(fill=X, pady=5)
-                    
-                    # 为动态创建的例句框架绑定滚轮事件
                     self._bind_wheel_to_frame(sentence_frame)
                     
-                    # 英文句子和播放按钮（播放按钮在前）
                     en_frame = Frame(sentence_frame)
                     en_frame.pack(fill=X, anchor=W)
-                    
-                    # 为英文句子框架绑定滚轮事件
                     self._bind_wheel_to_frame(en_frame)
                     
-                    # 添加例句播放按钮（放在句子前面）
                     if tts_url:
                         play_btn = Button(en_frame, text="🔊", fg="green", cursor="hand2",
                                          font=("Arial", 10), width=1, height=1,
                                          command=lambda url=tts_url: play_audio(url))
                         play_btn.pack(side=LEFT, padx=(0, 5))
-                        
-                        # 为播放按钮绑定滚轮事件
                         self._bind_wheel_to_widget(play_btn)
                     
                     en_label = Label(en_frame, text=f"{i+1}. {en_text}", 
-                                   font=("Arial", 11), fg="#333", wraplength=430, justify=LEFT)
+                                   font=("Arial", 11), fg="#333", 
+                                   wraplength=text_wraplength, justify=LEFT)
                     en_label.pack(side=LEFT, anchor=W)
-                    
-                    # 记录标签用于动态调整换行
                     self.wraplength_labels.append((en_label, "sentence"))
-                    
-                    # 为标签绑定滚轮事件
                     self._bind_wheel_to_widget(en_label)
                     
-                    # 中文翻译
                     cn_label = Label(sentence_frame, text=f"   {cn_text}", 
-                                   font=("Arial", 10), fg="#666", wraplength=430, justify=LEFT)
+                                   font=("Arial", 10), fg="#666", 
+                                   wraplength=text_wraplength, justify=LEFT)
                     cn_label.pack(anchor=W, padx=(20, 0))
-                    
-                    # 记录标签用于动态调整换行
                     self.wraplength_labels.append((cn_label, "sentence"))
-                    
-                    # 为中文标签绑定滚轮事件
                     self._bind_wheel_to_widget(cn_label)
     
     def _bind_wheel_to_frame(self, frame):

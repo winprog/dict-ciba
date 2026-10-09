@@ -92,13 +92,9 @@ def get_selected_text(service_instance=None):
             )
             if result.returncode == 0:
                 text = result.stdout.strip()
-                if text and len(text) < 100 and not text.startswith('file://'):
-                    if any(ord(c) < 32 for c in text):
+                if text and len(text) < 2000 and not text.startswith('file://'):
+                    if any(ord(c) < 32 and c not in '\n\t' for c in text):
                         logger.debug("跳过包含控制字符的文本")
-                        continue
-                    # 验证文本安全性
-                    if any(char in text for char in ';|`$\\'):
-                        logger.debug("跳过可能不安全的文本")
                         continue
                     
                     # 如果是服务实例调用，记录用户操作时间
@@ -121,14 +117,8 @@ def get_selected_text_primary():
         )
         if result.returncode == 0:
             text = result.stdout.strip()
-            if text and len(text) < 100:  # 合理的文本长度
-                # 验证文本安全性
-                if any(ord(c) < 32 for c in text):  # 控制字符检查
-                    return None
-                if any(char in text for char in ';|`$\\'):  # 安全性检查
-                    logger.debug("跳过可能不安全的文本")
-                    return None
-                if not re.match(r'^[\w\s\-\.\,!?;:"\'()]+$', text):
+            if text and len(text) < 2000:
+                if any(ord(c) < 32 and c not in '\n\t' for c in text):
                     return None
                 return text
     except Exception as e:
@@ -192,15 +182,9 @@ def get_word_at_position(x, y):
         
         if result.returncode == 0:
             text = result.stdout.strip()
-            # 验证文本有效性
-            if not text or len(text) > 50:
+            if not text or len(text) > 2000:
                 return None
-            if any(ord(c) < 32 for c in text):
-                return None
-            if any(char in text for char in ';|`$\\'):
-                logger.debug("跳过可能不安全的文本")
-                return None
-            if not re.match(r'^[\w\s\-\.\,!?;:"\'()]+$', text):
+            if any(ord(c) < 32 and c not in '\n\t' for c in text):
                 return None
             
             should_restore_clipboard = False
