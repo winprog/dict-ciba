@@ -17,7 +17,10 @@ from word_capture_service import get_service, start_service, stop_service, on_ca
 from word_state_manager import WordStateManager
 from iciba import query_word
 from llm_client import chat as llm_chat
-from desktop_placement import WindowPlacementService
+from desktop_placement import (
+    WindowPlacementService,
+    sticky_client_message_data,
+)
 
 
 def play_audio(url: str):
@@ -419,8 +422,8 @@ class DictionaryApp:
         self.root.update_idletasks()
 
         if target_desktop is not None:
-            print(f"📐 [show_window] 安排 100ms 后调用 _ensure_window_on_desktop('{target_desktop}')")
-            self.root.after(100, lambda: self._ensure_window_on_desktop(target_desktop))
+            print(f"📐 [show_window] 安排 100ms 后调用 _ensure_window_sticky()")
+            self.root.after(100, self._ensure_window_sticky)
         else:
             print(f"📐 [show_window] target_desktop 为 None, 不移动桌面")
 
@@ -448,49 +451,62 @@ class DictionaryApp:
             pass
         return None
 
-    def _ensure_window_on_desktop(self, target_desktop):
-        """将窗口移动到指定桌面并激活
+    def _ensure_window_sticky(self):
+        """让窗口驻留所有虚拟桌面（Sticky）。
 
-        GNOME 50.1 + Wayland 下 wmctrl 工具链失效（wmctrl -l 段错误），
-        改用 xprop 设置 _NET_WM_DESKTOP 属性 + xdotool windowactivate。
+        关键：GNOME 50.1 + Wayland 下，Mutter 不响应 xprop 改写 _NET_WM_DESKTOP
+        属性，只响应 _NET_WM_DESKTOP 的 ClientMessage 通知（source=1）。
+        因此通过 python-xlib 向 root 发送该 ClientMessage，让窗口在任意
+        虚拟桌面上都可见（翻译工具：取词窗口随取词出现）。
         """
         try:
-            print(f"🖥️  [_ensure_window_on_desktop] 开始, target_desktop='{target_desktop}'")
+            print(f"🖥️  [_ensure_window_sticky] 开始（ClientMessage 通知）")
 
             win_id = self._find_x11_window_id()
-            print(f"🖥️  [_ensure_window_on_desktop] 找到 X11 Window ID: {win_id}")
+            print(f"🖥️  [_ensure_window_sticky] 找到 X11 Window ID: {win_id}")
 
             if win_id is None:
-                print(f"🖥️  [_ensure_window_on_desktop] 窗口还没就绪, 200ms 后重试")
-                self.root.after(200, lambda: self._ensure_window_on_desktop(target_desktop))
+                print(f"🖥️  [_ensure_window_sticky] 窗口还没就绪, 200ms 后重试")
+                self.root.after(200, self._ensure_window_sticky)
                 return
 
-            r = subprocess.run(
-                ['xprop', '-id', win_id,
-                 '-f', '_NET_WM_DESKTOP', '32c',
-                 '-set', '_NET_WM_DESKTOP', str(target_desktop)],
-                capture_output=True, timeout=3
+            from Xlib import display as xdisplay, X
+            from Xlib.protocol import event as xevent
+
+            d = xdisplay.Display()
+            root = d.screen().root
+            w = d.create_resource_object('window', int(win_id))
+            atom = d.intern_atom('_NET_WM_DESKTOP')
+            msg = xevent.ClientMessage(
+                window=w,
+                client_type=atom,
+                data=(32, sticky_client_message_data()),
             )
-            print(f"🖥️  [_ensure_window_on_desktop] xprop set desktop: rc={r.returncode}, stderr={r.stderr.decode().strip()}")
+            root.send_event(
+                msg,
+                event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
+            )
+            d.flush()
+            print(f"🖥️  [_ensure_window_sticky] 已发送 sticky ClientMessage")
 
             r = subprocess.run(
                 ['xdotool', 'windowactivate', win_id],
                 capture_output=True, text=True, timeout=3
             )
-            print(f"🖥️  [_ensure_window_on_desktop] windowactivate: rc={r.returncode}, stderr={r.stderr.strip()}")
+            print(f"🖥️  [_ensure_window_sticky] windowactivate: rc={r.returncode}, stderr={r.stderr.strip()}")
 
             verify = subprocess.run(
-                ['xprop', '-id', win_id, '_NET_WM_DESKTOP'],
+                ['xprop', '-id', win_id, '_NET_WM_STATE'],
                 capture_output=True, text=True, timeout=3
             )
-            print(f"🖥️  [_ensure_window_on_desktop] 验证: {verify.stdout.strip()}")
+            print(f"🖥️  [_ensure_window_sticky] 验证: {verify.stdout.strip()}")
 
             self.root.deiconify()
             self.root.lift()
             self.root.focus_force()
-            print(f"🖥️  [_ensure_window_on_desktop] 完成")
+            print(f"🖥️  [_ensure_window_sticky] 完成")
         except Exception as e:
-            print(f"🖥️  [_ensure_window_on_desktop] 异常: {e}")
+            print(f"🖥️  [_ensure_window_sticky] 异常: {e}")
             import traceback
             traceback.print_exc()
 

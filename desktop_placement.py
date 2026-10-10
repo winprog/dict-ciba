@@ -210,3 +210,52 @@ class WindowPlacementService:
                 fallback_screen=fallback_screen,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Sticky（驻留所有桌面）
+# ---------------------------------------------------------------------------
+# 在 Wayland + XWayland 下，Mutter 不响应 xprop 把窗口"移动到指定桌面"。
+# 把 _NET_WM_DESKTOP 设为 -1（0xFFFFFFFF）即 Sticky，窗口驻留所有桌面，
+# 从而在任何虚拟桌面取词时窗口都可见。以下纯函数统一这类语义。
+# ---------------------------------------------------------------------------
+
+
+def sticky_desktop_value() -> int:
+    """Sticky 语义对应的 X 桌面值：-1（0xFFFFFFFF）。"""
+    return -1
+
+
+def is_sticky_desktop(value: int) -> bool:
+    """判断读回的桌面值是否为 Sticky（-1 或无符号的 0xFFFFFFFF）。"""
+    return value == -1 or value == 0xFFFFFFFF
+
+
+def net_wm_desktop_literal(sticky: bool = False, desktop: int = 0) -> str:
+    """返回写给 xprop 的 _NET_WM_DESKTOP 字面量字符串。
+
+    sticky=True 时写 '-1'；否则写对应桌面的十进制数字。
+    """
+    if sticky:
+        return "-1"
+    return str(desktop)
+
+
+# 全部桌面（Sticky）。EWMH: _NET_WM_DESKTOP = 0xFFFFFFFF 表示驻留所有桌面。
+_ALL_DESKTOPS = 0xFFFFFFFF
+# source indication：1 表示来自用户/pager，WM 才执行该 ClientMessage。
+_SOURCE_USER = 1
+
+
+def sticky_source_indication() -> int:
+    """ClientMessage 的 source indication：用户/pager 申请时为 1。"""
+    return _SOURCE_USER
+
+
+def sticky_client_message_data() -> tuple:
+    """构造 _NET_WM_DESKTOP 的 ClientMessage data（5 个 long）。
+
+    返回 (desktop=0xFFFFFFFF, source=1, 0, 0, 0)，即"驻留所有桌面"并标记为
+    用户申请。这是 Mutter 真正响应的 Sticky 触发方式（而非写属性）。
+    """
+    return (_ALL_DESKTOPS, _SOURCE_USER, 0, 0, 0)

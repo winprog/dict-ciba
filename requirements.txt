@@ -1,5 +1,7 @@
 # 本项目依赖的Python包
 requests>=2.25.0
+# 发送 _NET_WM_DESKTOP ClientMessage 让取词窗口 Sticky（跨虚拟桌面可见）
+python-xlib>=0.33
 
 # 系统依赖（需要在Ubuntu/Debian系统上安装）
 # sudo apt install xdotool xclip
