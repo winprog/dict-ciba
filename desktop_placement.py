@@ -196,11 +196,84 @@ class WindowPlacementService:
         y = max(m, min(y, screen_h - h - m))
         return WindowPlacement(desktop, x, y, screen_w, screen_h)
 
+    def _resolve_desktop(self, inp, mouse_x, mouse_y):
+        """解析出目标桌面与桌面内坐标；布局缺失时桌面为 None，坐标即绝对坐标。
+
+        与 compute 共享同一套桌面判定，两个放置策略都触发 window sticky。
+        """
+        if inp.layout is None:
+            return None, mouse_x, mouse_y
+        placement = self._resolver.resolve(inp.layout, mouse_x, mouse_y)
+        return placement.desktop, placement.rel_x, placement.rel_y
+
+    @staticmethod
+    def _far_corner(rel_x, rel_y, w, h, screen_w, screen_h, margin):
+        """把窗口放到离取词点最远的角落，避免遮挡鼠标周围的文档。
+
+        以屏幕中心为界分四象限，选择与鼠标相对的另一侧；窗口过大时兜底左上。
+        """
+        half_w, half_h = screen_w // 2, screen_h // 2
+        right = screen_w - w - margin
+        bottom = screen_h - h - margin
+        if rel_x <= half_w and rel_y <= half_h:      # 左上 -> 右下
+            x, y = right, bottom
+        elif rel_x > half_w and rel_y <= half_h:      # 右上 -> 左下
+            x, y = margin, bottom
+        elif rel_x <= half_w and rel_y > half_h:      # 左下 -> 右上
+            x, y = right, margin
+        else:                                          # 右下 -> 左上
+            x, y = margin, margin
+        # 窗口过大时窗口缘可能为负，把窗口裁剪回可视区
+        x = max(margin, min(x, screen_w - w - margin))
+        y = max(margin, min(y, screen_h - h - margin))
+        return x, y
+
+    def avoid_mouse(self, inp: PlacementInput) -> WindowPlacement:
+        """远离取词点放置：解析出桌面，但几何落点在对角的远端象限。"""
+        screen_w, screen_h = inp.fallback_screen
+        if inp.layout is not None and inp.layout.viewport_width and inp.layout.viewport_height:
+            screen_w, screen_h = inp.layout.viewport_width, inp.layout.viewport_height
+
+        if inp.mouse_x is None or inp.mouse_y is None:
+            return WindowPlacement(
+                desktop=None,
+                x=screen_w - inp.window_width - 50,
+                y=screen_h - inp.window_height - 50,
+                screen_width=screen_w,
+                screen_height=screen_h,
+            )
+
+        desktop, rel_x, rel_y = self._resolve_desktop(inp, inp.mouse_x, inp.mouse_y)
+        x, y = self._far_corner(
+            rel_x, rel_y, inp.window_width, inp.window_height,
+            screen_w, screen_h, inp.margin,
+        )
+        return WindowPlacement(desktop, x, y, screen_w, screen_h)
+
     def current_placement(self, mouse, window_width, window_height, fallback_screen):
-        """便捷入口：先取当前布局，再算窗口几何。"""
+        """便捷入口：先取当前布局，再算窗口几何（环绕式）。"""
         layout = self._provider.get_layout()
         mouse_x, mouse_y = (mouse if mouse else (None, None))
         return self.compute(
+            PlacementInput(
+                layout=layout,
+                mouse_x=mouse_x,
+                mouse_y=mouse_y,
+                window_width=window_width,
+                window_height=window_height,
+                fallback_screen=fallback_screen,
+            )
+        )
+
+    def avoid_current_placement(self, mouse, window_width, window_height, fallback_screen):
+        """便捷入口：取当前布局，按远离取词点策略算窗口几何。
+
+        与 current_placement 共享同一布局源与桌面判定，仅几何落点改为
+        对角远端象限，避免窗口遮挡鼠标周围的阅读内容。
+        """
+        layout = self._provider.get_layout()
+        mouse_x, mouse_y = (mouse if mouse else (None, None))
+        return self.avoid_mouse(
             PlacementInput(
                 layout=layout,
                 mouse_x=mouse_x,

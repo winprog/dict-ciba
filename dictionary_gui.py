@@ -403,8 +403,9 @@ class DictionaryApp:
         print(f"📐 [show_window] 初始: screen={self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}, window={window_width}x{window_height}")
         print(f"📐 [show_window] last_mouse_position={self.last_mouse_position}")
 
-        # Facade：解析桌面布局 -> 判桌面 -> 算窗口几何（对鼠标上方/下方/角落 + 边界裁剪 + 无鼠标兜底）
-        placement = self._placement_service.current_placement(
+        # Facade：解析桌面布局 -> 判桌面 -> 算窗口几何。
+        # 远离取词点放置：窗口落到对角远端象限，避免遮挡鼠标周围的文档。
+        placement = self._placement_service.avoid_current_placement(
             self.last_mouse_position,
             window_width,
             window_height,
