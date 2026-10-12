@@ -39,6 +39,20 @@ RunCommand(blocking=false, wait_ms_before_check=20000, ...)
 bash -c 'timeout 60 python3 llm_client.py "你的prompt"'
 ```
 
+### 执行命令的输出获取
+
+根本原因：通过控制台调用命令时，**结果输出有时收不到**（响应丢失）。因此命令**以异步方式执行**（`blocking=false`），并**限时轮询**获取结果输出：
+
+1. **异步执行** — 用 `RunCommand(blocking=false)` 启动命令，避免阻塞
+2. **限时轮询** — 在有限时间内多次用 `CheckCommandStatus` 轮询结果输出，不让轮询无限持续
+3. **重定向兜底** — 若结果输出始终无法通过轮询获取（进程已退出、输出丢失等），则把命令重定向到临时文件再读取该文件获取输出
+
+**示例：**
+
+```bash
+bash -c 'source env.sh && python3 llm_client.py "你的prompt" > /tmp/llm_out.txt 2>&1'
+```
+
 ### 项目依赖
 
 - Python 3
