@@ -76,35 +76,12 @@ def get_word_under_mouse():
 
 
 def get_selected_text(service_instance=None):
-    """获取选中文本（优化版，检测用户操作）"""
-    current_time = time.time()
-    
-    # 如果是服务实例调用，检查用户操作时间
-    if service_instance and current_time - service_instance._user_copy_time < 0.5:
-        # 用户最近有复制操作，跳过自动检测
-        return None
-    
-    for selection in ["primary", "clipboard"]:
-        try:
-            result = subprocess.run(
-                ["xclip", "-selection", selection, "-o"],
-                capture_output=True, text=True, timeout=1
-            )
-            if result.returncode == 0:
-                text = result.stdout.strip()
-                if text and len(text) < 2000 and not text.startswith('file://'):
-                    if any(ord(c) < 32 and c not in '\n\t' for c in text):
-                        logger.debug("跳过包含控制字符的文本")
-                        continue
-                    
-                    # 如果是服务实例调用，记录用户操作时间
-                    if service_instance and selection == "clipboard":
-                        service_instance._user_copy_time = current_time
-                        
-                    return text
-        except Exception as e:
-            logger.debug(f"获取选中文本失败 ({selection}): {e}")
-    return None
+    """获取选中文本（仅读 PRIMARY，不读剪贴板）。
+
+    ADR-0001：PRIMARY 读不到时不再回退读剪贴板，避免把陈旧剪贴板
+    内容（如用户刚粘贴的问题）误判为当前选中。宁可漏词也不翻译错词。
+    """
+    return get_selected_text_primary()
 
 
 def get_selected_text_primary():
