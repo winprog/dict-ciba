@@ -1,7 +1,7 @@
 """ResultRenderer.render 的 Tk 实渲染测试。
 
-在真实 Tk 根上渲染样例 data，验证各分支不抛异常、换行登记正确、
-关键文本确实呈现。这层专治 LEFT『NameError』这类只在真实渲染路径
+在真实 Tk 根上渲染样例 data，验证各分支不抛异常、关键文本确实呈现、
+文本控件可选中复制。这层专治 LEFT『NameError』这类只在真实渲染路径
 才暴露的缺陷。无显示环境时自动 skip。
 """
 import tkinter as tk
@@ -9,6 +9,7 @@ import tkinter as tk
 import pytest
 
 from ui.result_renderer import ResultRenderer
+from ui.selectable_text import SelectableText
 
 
 @pytest.fixture(scope="module")
@@ -28,28 +29,63 @@ def make_renderer(root):
 
 
 def render_texts(renderer):
-    """收集渲染目标 frame 下的文本（递归），用于行为断言。"""
+    """收集渲染目标 frame 下的文本（递归，兼容 Label 与 SelectableText）。"""
     out = []
 
     def walk(w):
         for child in w.winfo_children():
-            try:
-                txt = child.cget("text")
-                if txt:
-                    out.append(txt)
-            except tk.TclError:
-                pass
+            if child.winfo_class() == "Text":
+                try:
+                    out.append(child.get("1.0", "end-1c"))
+                except tk.TclError:
+                    pass
+            else:
+                try:
+                    txt = child.cget("text")
+                    if txt:
+                        out.append(txt)
+                except tk.TclError:
+                    pass
             walk(child)
 
     walk(renderer.frame)
     return out
 
 
+def text_widgets(w):
+    """收集 frame 下所有 SelectableText 控件（递归）。"""
+    out = []
+
+    def walk(x):
+        for child in x.winfo_children():
+            if isinstance(child, SelectableText):
+                out.append(child)
+            walk(child)
+
+    walk(w)
+    return out
+
+
+def test_rendered_text_widgets_are_selectable(tk_root):
+    """文本由只读可选中 Text 承载，锁定「结果可划选复制」回归。"""
+    r = make_renderer(tk_root)
+    r.render({
+        "word": "hello", "is_phrase": False,
+        "symbols": {"parts": [{"part": "int.", "means": ["你好", "问候"]}]},
+    })
+    texts = text_widgets(r.frame)
+    assert texts, "结果应渲染为可选中文本控件"
+    for w in texts:
+        assert isinstance(w, tk.Text)
+        seqs = list(w.bind())
+        assert "<Key>" in seqs or "<Control-c>" in seqs
+
+
 def test_long_text_branch(tk_root):
     r = make_renderer(tk_root)
     r.render({"word": "x" * 120, "is_phrase": False})
-    assert r._wrap_labels                      # 已登记换行
-    assert "x" * 120 in render_texts(r)
+    assert any("x" * 120 == t for t in render_texts(r))
+    assert text_widgets(r.frame), "长文本应以可选中 Text 承载"
 
 
 def test_phrase_translation_branch(tk_root):
@@ -98,10 +134,8 @@ def test_word_with_pronounce_buttons_branch(tk_root):
     assert any("放弃, 抛弃" in t for t in texts)
 
 
-def test_update_wraplength_applies_wrap(tk_root):
+def test_update_wraplength_is_noop(tk_root):
     r = make_renderer(tk_root)
     r.render({"word": "translate"})
-    r.update_wraplength(600)
-    # 登记的 label 都应被更新为指定 wrap 宽度
-    for label, _ in r._wrap_labels:
-        assert label.cget("wraplength") in (max(120, 600 - 20), max(90, 600 - 50))
+    r.update_wraplength(600)               # 换行现由 SelectableText 自动处理，不应抛异常
+    assert text_widgets(r.frame)
