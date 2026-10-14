@@ -5,6 +5,9 @@
 """
 
 import time
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class WordStateManager:
@@ -58,9 +61,9 @@ class WordStateManager:
         
         # 调试信息
         if self.debug_mode:
-            print(f"DEBUG WordStateManager: 新单词='{new_word}' -> '{cleaned_new}', "
-                  f"当前单词='{current_word}' -> '{cleaned_current}', "
-                  f"是否相同={cleaned_new == cleaned_current}")
+            logger.debug(f"DEBUG WordStateManager: 新单词='{new_word}' -> '{cleaned_new}', "
+                         f"当前单词='{current_word}' -> '{cleaned_current}', "
+                         f"是否相同={cleaned_new == cleaned_current}")
         
         return cleaned_new == cleaned_current
     

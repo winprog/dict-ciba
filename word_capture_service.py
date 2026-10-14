@@ -9,6 +9,12 @@ import re
 from pathlib import Path
 import logging
 
+try:
+    from Xlib import display as _xlib_display
+    _X11_AVAILABLE = True
+except Exception:
+    _X11_AVAILABLE = False
+
 CACHE_DIR = Path.home() / ".cache" / "word-capture"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 LAST_WORD_FILE = CACHE_DIR / "last_word.txt"
@@ -40,6 +46,25 @@ def check_dependencies():
         logger.error("请安装这些工具: sudo apt install xdotool xclip")
         return False
     return True
+
+
+def is_mouse_left_pressed():
+    """查询全局指针左键当前是否处于按下状态（跨应用，无需 X 事件循环）。
+
+    选词发生在别的应用里，这里用 XQueryPointer 读指针按钮掩码
+    （Button1Mask = 1<<8 = 0x100），可精确判断用户是否还在拖选。
+    """
+    if not _X11_AVAILABLE:
+        return False
+    try:
+        d = _xlib_display.Display()
+        root = d.screen().root
+        state = root.query_pointer().state
+        d.close()
+        return bool(state & 0x100)  # Button1Mask = 1 << 8
+    except Exception as e:
+        logger.debug(f"查询指针按钮状态失败: {e}")
+        return False
 
 
 def get_word_under_mouse():
@@ -256,7 +281,15 @@ class WordCaptureService:
         """优化的监控循环，减少抖动和冲突"""
         last_trigger_time = 0
         trigger_cooldown = 0.3  # 300ms冷却时间
-        
+
+        # 启动基准：PRIMARY 是持久的，先读当前值当作上次词，
+        # 避免遗留的旧选中被误判为「新词」而在刚启动就触发翻译。
+        _baseline = get_selected_text(self)
+        if _baseline:
+            self.last_word = _baseline
+            self.last_captured_word = _baseline
+            logger.debug(f"启动基准 PRIMARY: {_baseline!r}")
+
         while self.running:
             try:
                 if self.stopping:
@@ -273,6 +306,18 @@ class WordCaptureService:
                 # 优先检查选中文本（用户主动操作）
                 selected = get_selected_text(self)
                 if selected and selected != self.last_word and not self.stopping:
+                    # 鼠标左键抬起才判定选完：按住期间 PRIMARY 是中间态，
+                    # 可能在拖选长句/长文本，此时不触发，避免选到一半就翻译。
+                    if is_mouse_left_pressed():
+                        time.sleep(self.poll_interval)
+                        continue
+                    # 左键已抬起，再读一次确认选区已定型
+                    stable = get_selected_text(self)
+                    if stable is None or stable != selected:
+                        time.sleep(self.poll_interval)
+                        continue
+                    selected = stable
+
                     # 更严格的重复检测：清理标点后比较
                     cleaned_selected = self._clean_word(selected)
                     cleaned_last = self._clean_word(self.last_captured_word)
@@ -284,6 +329,7 @@ class WordCaptureService:
                     self.last_word = selected
                     self.last_captured_word = selected
                     last_trigger_time = current_time
+                    logger.debug(f"[DEBUG-cap] 稳定选中 len={len(selected)}: {selected!r}")
                     logger.debug(f"选中文本触发回调: '{selected}'")
                     
                     if self.callback:

@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Dict-CiBa UI Prototype</title>
+<style>
+  :root {
+    --space-1: 4px; --space-2: 8px; --space-3: 16px; --space-4: 24px;
+    --radius: 8px;
+    --shadow: 0 4px 16px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "Noto Sans SC", Arial, sans-serif;
+         background: #f0f2f5; min-height: 100vh; display: flex; align-items: flex-start;
+         justify-content: center; padding: 80px 20px 120px; }
+
+  /* ===== 浮动控制栏 ===== */
+  .control-bar {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #fff; border-radius: 40px; box-shadow: var(--shadow);
+    padding: 8px; display: flex; align-items: center; gap: 12px; z-index: 100;
+    border: 1px solid #e0e0e0;
+  }
+  .control-bar .group { display: flex; gap: 4px; }
+  .control-bar .divider { width: 1px; height: 24px; background: #e0e0e0; }
+  .control-bar button {
+    border: none; background: transparent; padding: 8px 18px; border-radius: 30px;
+    cursor: pointer; font-size: 13px; color: #666; font-weight: 500;
+    transition: all .15s ease; white-space: nowrap;
+  }
+  .control-bar button.active { background: #1565C0; color: #fff; }
+  .control-bar button:hover:not(.active) { background: #f5f5f5; }
+  .control-bar button[disabled] { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+  .frame-label {
+    position: fixed; top: 20px; right: 20px; background: #fff;
+    padding: 6px 14px; border-radius: 20px; font-size: 12px;
+    color: #666; box-shadow: var(--shadow); border: 1px solid #e0e0e0;
+  }
+  .frame-label b { color: #1565C0; }
+
+  /* ===== 窗口共用外框 ===== */
+  .window {
+    background: #fff; border-radius: 12px; box-shadow: var(--shadow);
+    width: 520px; max-width: 92vw; min-height: 420px;
+    overflow: hidden; border: 1px solid #e8e8e8;
+  }
+  .window-titlebar {
+    height: 36px; background: #fafafa; border-bottom: 1px solid #eee;
+    display: flex; align-items: center; padding: 0 12px; gap: 8px;
+    font-size: 12px; color: #666;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .title { margin-left: 8px; flex: 1; }
+
+  .variant { display: none; }
+  .variant.active { display: block; }
+
+  /* ===== Variant A — Proposed（标准模式） ===== */
+  .a .toolstrip {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-2) var(--space-3); border-bottom: 1px solid #f0f0f0;
+  }
+  .a .status-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  }
+  .a .status-chip.on { background: #e8f5e9; color: #2e7d32; }
+  .a .status-chip.off { background: #fafafa; color: #757575; border: 1px solid #e0e0e0; }
+  .a .status-chip .led {
+    width: 8px; height: 8px; border-radius: 50%; background: #28c840;
+    box-shadow: 0 0 0 3px rgba(40,200,64,0.2);
+  }
+  .a .status-chip.off .led { background: #ccc; box-shadow: none; }
+  .a .btn-icon {
+    border: none; background: #f5f5f5; width: 32px; height: 32px; border-radius: 8px;
+    cursor: pointer; font-size: 14px; color: #424242; display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s;
+  }
+  .a .btn-icon:hover { background: #eee; }
+  .a .btn-primary {
+    border: none; background: #1565C0; color: #fff; padding: 8px 20px;
+    border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 13px;
+    transition: background .12s;
+  }
+  .a .btn-primary:hover { background: #0d47a1; }
+  .a .btn-secondary {
+    border: 1px solid #e0e0e0; background: #fff; color: #424242; padding: 8px 20px;
+    border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 13px;
+    transition: background .12s;
+  }
+  .a .btn-secondary:hover { background: #fafafa; }
+
+  .a .input-row {
+    display: flex; gap: var(--space-2); padding: var(--space-3);
+  }
+  .a .input-row input {
+    flex: 1; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 14px;
+    font-size: 15px; outline: none; transition: border-color .15s;
+  }
+  .a .input-row input:focus { border-color: #1565C0; }
+
+  .a .body { padding: 0 var(--space-3) var(--space-3); }
+  .a .word-head {
+    font-size: 26px; font-weight: 700; color: #212121; margin-bottom: var(--space-1);
+  }
+  .a .phonetic { color: #616161; font-size: 14px; margin-bottom: var(--space-3); }
+  .a .pron-row { display: flex; gap: 8px; margin-bottom: var(--space-3); }
+  .a .pron-btn {
+    background: #e3f2fd; border: none; padding: 6px 12px; border-radius: 6px;
+    font-size: 13px; color: #1565C0; cursor: pointer; font-weight: 500;
+    transition: background .12s;
+  }
+  .a .pron-btn:hover { background: #bbdefb; }
+  .a .section-label {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.5px; color: #9e9e9e; margin-bottom: var(--space-2);
+    margin-top: var(--space-3);
+  }
+  .a .meaning-item { margin-bottom: var(--space-1); color: #424242; font-size: 14px; line-height: 1.55; }
+  .a .meaning-pos { color: #1565C0; font-weight: 600; margin-right: 6px; font-size: 12px; }
+  .a .example-card {
+    background: #fafafa; border-left: 3px solid #e0e0e0; padding: var(--space-2) var(--space-3);
+    border-radius: 0 6px 6px 0; margin-bottom: var(--space-2); transition: border-color .15s;
+  }
+  .a .example-card:hover { border-left-color: #1565C0; }
+  .a .example-en { font-size: 14px; color: #212121; margin-bottom: 4px; }
+  .a .example-cn { font-size: 13px; color: #616161; }
+
+  .a .inline-error {
+    background: #ffebee; border: 1px solid #ef9a9a; color: #c62828;
+    padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: var(--space-2);
+    display: flex; gap: 8px; align-items: center;
+  }
+
+  .a .footer-hint {
+    margin-top: var(--space-3); padding-top: var(--space-2);
+    border-top: 1px solid #f0f0f0; display: flex; justify-content: space-between;
+    font-size: 12px; color: #9e9e9e;
+  }
+  .a kbd {
+    background: #f5f5f5; border: 1px solid #e0e0e0; border-bottom-width: 2px;
+    padding: 1px 6px; border-radius: 4px; font-family: inherit; font-size: 11px;
+    color: #616161;
+  }
+
+  /* Variant A — LLM 对话 */
+  .a .chat-header {
+    background: linear-gradient(135deg, #1565C0 0%, #42a5f5 100%);
+    color: #fff; padding: 16px;
+  }
+  .a .chat-header h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .a .chat-header p { margin: 0; font-size: 12px; opacity: 0.9; }
+  .a .chat-body { padding: 16px; max-height: 360px; overflow-y: auto; }
+  .a .chat-bubble {
+    max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px;
+    line-height: 1.6; margin-bottom: 10px;
+  }
+  .a .chat-bubble.user { background: #1565C0; color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
+  .a .chat-bubble.ai { background: #f5f5f5; color: #212121; border-bottom-left-radius: 4px; }
+  .a .chat-bubble.ai code {
+    background: #e3f2fd; padding: 1px 5px; border-radius: 4px; font-family: "SF Mono", Menlo, monospace;
+    font-size: 13px; color: #1565C0;
+  }
+  .a .chat-input-row {
+    display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #f0f0f0;
+  }
+  .a .chat-input-row input {
+    flex: 1; border: 1px solid #e0e0e0; border-radius: 8px; padding: 9px 12px;
+    font-size: 14px; outline: none; transition: border-color .15s;
+  }
+  .a .chat-input-row input:focus { border-color: #1565C0; }
+
+  .a .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid #e0e0e0;
+    border-top-color: #1565C0; border-radius: 50%; animation: spin .8s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== Variant A — 紧凑模式覆盖 ===== */
+  .a.compact .window { width: 360px; min-height: 320px; }
+  .a.compact .window-titlebar { height: 28px; font-size: 11px; padding: 0 8px; }
+  .a.compact .dot { width: 9px; height: 9px; }
+
+  .a.compact .toolstrip { padding: 6px 10px; gap: 8px; }
+  .a.compact .status-chip { font-size: 11px; padding: 3px 8px; }
+  .a.compact .status-chip .led { width: 6px; height: 6px; box-shadow: 0 0 0 2px rgba(40,200,64,0.2); }
+  .a.compact .btn-icon { width: 28px; height: 28px; font-size: 13px; border-radius: 6px; }
+
+  .a.compact .input-row { padding: 10px; gap: 6px; }
+  .a.compact .input-row input { font-size: 13px; padding: 6px 10px; border-radius: 6px; }
+  .a.compact .btn-primary { padding: 6px 14px; font-size: 12px; border-radius: 6px; }
+  .a.compact .btn-secondary { padding: 6px 14px; font-size: 12px; border-radius: 6px; }
+
+  .a.compact .body { padding: 0 10px 10px; }
+  .a.compact .word-head { font-size: 20px; }
+  .a.compact .phonetic { font-size: 12px; margin-bottom: 8px; }
+  .a.compact .pron-row { gap: 4px; margin-bottom: 8px; }
+  .a.compact .pron-btn { padding: 3px 8px; font-size: 11px; border-radius: 4px; }
+  .a.compact .section-label { font-size: 10px; letter-spacing: 0.4px; margin-top: 8px; margin-bottom: 4px; }
+  .a.compact .meaning-pos { font-size: 11px; }
+  .a.compact .meaning-item { font-size: 12px; line-height: 1.5; margin-bottom: 1px; }
+  .a.compact .example-card { padding: 6px 10px; border-radius: 0 4px 4px 0; margin-bottom: 6px; }
+  .a.compact .example-en { font-size: 12px; margin-bottom: 2px; }
+  .a.compact .example-cn { font-size: 11px; }
+  .a.compact .inline-error { padding: 6px 10px; font-size: 12px; border-radius: 6px; }
+
+  .a.compact .footer-hint { margin-top: 10px; padding-top: 8px; font-size: 10px; }
+  .a.compact kbd { font-size: 9px; padding: 0 4px; }
+
+  /* 紧凑模式 LLM 对话 */
+  .a.compact .chat-header { padding: 10px 12px; }
+  .a.compact .chat-header h3 { font-size: 12px; }
+  .a.compact .chat-header p { font-size: 10px; }
+  .a.compact .chat-body { padding: 12px; max-height: 240px; }
+  .a.compact .chat-bubble { padding: 7px 10px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; border-radius: 10px; }
+  .a.compact .chat-bubble.ai code { font-size: 11px; }
+  .a.compact .chat-input-row { padding: 8px 12px; gap: 6px; }
+  .a.compact .chat-input-row input { font-size: 12px; padding: 5px 8px; border-radius: 6px; }
+
+  /* ===== Variant B — Current（对照组） ===== */
+  .b .top-strip {
+    background: #f5f5f5; padding: 10px; border-bottom: 1px solid #ddd;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .b .btn { border: none; padding: 6px 10px; border-radius: 3px; font-size: 12px; cursor: pointer; }
+  .b .btn-green { background: #90EE90; }
+  .b .btn-red { background: #F08080; }
+  .b .btn-blue { background: #ADD8E6; }
+  .b .btn-yellow { background: #FFFFE0; }
+  .b .status-txt { font-size: 12px; color: #666; }
+  .b .check { font-size: 12px; }
+  .b .input-row {
+    display: flex; gap: 5px; padding: 10px; border-bottom: 1px solid #eee;
+  }
+  .b .input-row input {
+    flex: 1; border: 1px solid #ccc; padding: 6px 8px; font-size: 14px;
+  }
+  .b .input-row .btn-search { background: #ddd; }
+  .b .input-row .btn-llm { background: #1565C0; color: #fff; }
+  .b .result-area { padding: 10px; }
+  .b .word-big { font-size: 24px; font-weight: bold; margin-bottom: 10px; text-align: center; }
+  .b .phonetic { text-align: center; margin-bottom: 5px; }
+  .b .pron-row { text-align: center; margin-bottom: 10px; }
+  .b .pron-btn { background: #e3f2fd; color: blue; border: none; padding: 3px 8px; margin: 0 3px; cursor: pointer; }
+  .b h4 { margin: 10px 0 5px; font-size: 12px; }
+
+  .hint-caption {
+    text-align: center; margin-top: 14px; font-size: 12px; color: #888;
+  }
+</style>
+</head>
+<body>
+
+<div class="frame-label">
+  Prototype · Dict-CiBa UI ·
+  <b id="current-name">Proposed · 标准模式</b>
+</div>
+
+<!-- ========================== VARIANT A : Proposed ========================== -->
+<div class="variant active a" id="variant-a">
+  <!-- 词典查词窗口 -->
+  <div class="window">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">Dictionary — 取词翻译</span>
+    </div>
+
+    <div class="toolstrip">
+      <div class="status-chip on">
+        <span class="led"></span> 取词运行中
+      </div>
+      <button class="btn-icon" title="切换为 LLM 模式" onclick="toggleChatA()">🧠</button>
+      <div style="flex:1"></div>
+      <button class="btn-icon" title="置顶">📌</button>
+      <button class="btn-icon" title="隐藏">✕</button>
+    </div>
+
+    <div class="input-row">
+      <input type="text" value="serendipity" readonly />
+      <button class="btn-secondary">🔊</button>
+      <button class="btn-primary">Search</button>
+    </div>
+
+    <div class="body">
+      <div class="word-head">serendipity</div>
+      <div class="phonetic">/ˌserənˈdɪpəti/  ·  英 /ˌserənˈdɪpəti/  美</div>
+
+      <div class="pron-row">
+        <button class="pron-btn">🔊 EN</button>
+        <button class="pron-btn">🔊 US</button>
+        <button class="pron-btn">🔊 TTS</button>
+      </div>
+
+      <div class="section-label">Meanings</div>
+      <div class="meaning-item"><span class="meaning-pos">n.</span>意外发现美好事物的运气；机缘巧合</div>
+
+      <div class="section-label">Examples</div>
+      <div class="example-card">
+        <div class="example-en">Finding that rare coin was pure serendipity.</div>
+        <div class="example-cn">找到那枚罕见的硬币纯粹是机缘巧合。</div>
+      </div>
+      <div class="example-card">
+        <div class="example-en">It was serendipity that we met at the airport.</div>
+        <div class="example-cn">我们在机场相遇真是太巧了。</div>
+      </div>
+
+      <div class="footer-hint">
+        <div><kbd>Esc</kbd> 隐藏 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> 取词开关</div>
+        <div>v1.0 · 🟢 运行中</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint-caption">点击 🧠 图标 或下方按钮切换 LLM 对话</div>
+
+  <div style="text-align:center; margin-top:8px;">
+    <button class="btn-primary" onclick="toggleChatA()">↓ 进入 LLM 多轮对话</button>
+  </div>
+
+  <!-- LLM 对话（默认隐藏） -->
+  <div class="window" id="variant-a-chat" style="margin-top:30px; display:none;">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">Dictionary — AI 多轮对话</span>
+    </div>
+    <div class="chat-header">
+      <h3>🧠 正在翻译: "The best things in life are serendipitous."</h3>
+      <p>可继续追问背后含义、文化典故或用法对比</p>
+    </div>
+    <div class="chat-body">
+      <div class="chat-bubble user">The best things in life are serendipitous. 这句话是什么意思？</div>
+      <div class="chat-bubble ai">
+        这句话的字面意思是：<br>
+        <code>生活中最美好的事情往往是机缘巧合的。</code><br><br>
+        背后的含义是鼓励人们保持**开放心态**——很多重要的机遇、爱情、职业转折都不是刻意规划出来的，而是在日常中偶然撞见的。类似中文的「无心插柳柳成荫」。
+      </div>
+    </div>
+    <div class="chat-input-row">
+      <input type="text" placeholder="继续追问… 例如: 举个例子？" />
+      <button class="btn-primary">追问 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================== VARIANT B : Current ========================== -->
+<div class="variant b" id="variant-b">
+  <div class="window">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">Dictionary</span>
+    </div>
+
+    <div class="top-strip">
+      <button class="btn btn-green">启动取词模式</button>
+      <span class="status-txt">取词模式: 关闭</span>
+      <label class="check"><input type="checkbox"> 启用鼠标悬停取词</label>
+      <div style="flex:1"></div>
+      <button class="btn btn-blue">置顶显示</button>
+      <button class="btn btn-yellow">隐藏窗口</button>
+    </div>
+
+    <div class="input-row">
+      <input type="text" value="serendipity">
+      <button class="btn btn-search">Search</button>
+      <button class="btn btn-llm">LLM</button>
+    </div>
+
+    <div class="result-area">
+      <div class="word-big">serendipity</div>
+      <div class="phonetic">[ˌserənˈdɪpəti]</div>
+      <div class="pron-row">
+        <button class="pron-btn">🔊 EN: /ˌserənˈdɪpəti/</button>
+        <button class="pron-btn">🔊 AM: /ˌserənˈdɪpəti/</button>
+        <button class="pron-btn">🔊 TTS</button>
+      </div>
+
+      <h4 style="font-weight:bold; color:#333;">Meanings:</h4>
+      <div style="color:#555; font-size:10px; margin-left:10px;">
+        n.: 意外发现美好事物的运气, 机缘巧合
+      </div>
+
+      <h4 style="font-weight:bold; color:#333; margin-top:10px;">例句:</h4>
+      <div style="font-size:10px; color:#333; margin-bottom:5px;">
+        <div>1. Finding that rare coin was pure serendipity.</div>
+        <div style="color:#666; margin-left:20px;">找到那枚罕见的硬币纯粹是机缘巧合。</div>
+      </div>
+      <div style="font-size:10px; color:#333;">
+        <div>2. It was serendipity that we met at the airport.</div>
+        <div style="color:#666; margin-left:20px;">我们在机场相遇真是太巧了。</div>
+      </div>
+    </div>
+  </div>
+  <div class="hint-caption">← 当前真实界面：状态色对比度不足、无 spacing scale、控件分组混乱</div>
+</div>
+
+<!-- 浮动控制栏 -->
+<div class="control-bar">
+  <div class="group" id="scheme-group">
+    <button data-scheme="a" class="active" onclick="switchScheme('a')">A · Proposed</button>
+    <button data-scheme="b" onclick="switchScheme('b')">B · Current</button>
+  </div>
+  <div class="divider"></div>
+  <div class="group" id="mode-group">
+    <button data-mode="full" class="active" onclick="switchMode('full')">📐 标准</button>
+    <button data-mode="compact" onclick="switchMode('compact')">📏 紧凑</button>
+  </div>
+</div>
+
+<script>
+  const SCHEME_NAMES = { a: 'Proposed', b: 'Current' };
+  const MODE_NAMES = { full: '标准模式', compact: '紧凑模式' };
+
+  function switchScheme(s) {
+    document.querySelectorAll('.variant').forEach(n => n.classList.remove('active'));
+    document.getElementById('variant-' + s).classList.add('active');
+
+    document.querySelectorAll('#scheme-group button').forEach(b =>
+      b.classList.toggle('active', b.dataset.scheme === s));
+
+    const modeBtns = document.querySelectorAll('#mode-group button');
+    if (s === 'a') {
+      modeBtns.forEach(b => b.disabled = false);
+    } else {
+      modeBtns.forEach(b => b.disabled = true);
+    }
+
+    updateLabel();
+    syncUrl();
+  }
+
+  function switchMode(m) {
+    const variantA = document.getElementById('variant-a');
+    variantA.classList.toggle('compact', m === 'compact');
+
+    document.querySelectorAll('#mode-group button').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === m));
+
+    updateLabel();
+    syncUrl();
+  }
+
+  function updateLabel() {
+    const scheme = document.querySelector('#scheme-group button.active').dataset.scheme;
+    const modeBtn = document.querySelector('#mode-group button:not([disabled]).active');
+    const mode = modeBtn ? modeBtn.dataset.mode : 'full';
+    let text = SCHEME_NAMES[scheme];
+    if (scheme === 'a') text += ' · ' + MODE_NAMES[mode];
+    document.getElementById('current-name').textContent = text;
+  }
+
+  function syncUrl() {
+    const scheme = document.querySelector('#scheme-group button.active').dataset.scheme;
+    const mode = document.querySelector('#mode-group button.active').dataset.mode;
+    const params = new URLSearchParams();
+    params.set('s', scheme);
+    if (scheme === 'a') params.set('m', mode);
+    history.replaceState(null, '', '?' + params.toString());
+  }
+
+  function toggleChatA() {
+    const el = document.getElementById('variant-a-chat');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    if (el.style.display === 'block') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  const p = new URLSearchParams(location.search);
+  if (p.get('s')) switchScheme(p.get('s'));
+  if (p.get('m')) switchMode(p.get('m'));
+</script>
+</body>
+</html>

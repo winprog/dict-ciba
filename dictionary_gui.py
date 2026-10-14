@@ -1,151 +1,33 @@
 import json
 import re
-import requests
-import tempfile
+import html
 import subprocess
-import threading
 import sys
 import os
 import time
 from typing import Optional, Dict, Any
 from tkinter import *
-from tkinter import messagebox
+from tkinter import ttk, messagebox
+from logger import get_logger, setup as setup_logging
+
+logger = get_logger(__name__)
 
 # 导入取词服务
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from word_capture_service import get_service, start_service, stop_service, on_capture
+from capture_controller import CaptureController
+from search_controller import SearchController
 from word_state_manager import WordStateManager
-from iciba import query_word
-from llm_client import chat as llm_chat
+from llm_conversation import LLMConversation
+from search_history import SearchHistory
+from result_renderer import ResultRenderer
+from llm_client import chat_messages as llm_chat_messages
+import markdown
+from tkinterweb import HtmlFrame
 from desktop_placement import (
     WindowPlacementService,
     sticky_client_message_data,
 )
-
-
-def play_audio(url: str):
-    """播放音频文件，使用ffplay统一处理所有格式"""
-    if not url:
-        print("音频URL为空，无法播放")
-        return
-
-    # 记录音频URL，方便调试
-    print(f"🔊 播放音频请求 - URL: {url}")
-    print(f"🔊 音频URL类型: {'网络URL' if url.startswith('http') else '本地文件'}")
-
-    # 如果是网络URL，检查URL格式
-    if url.startswith('http'):
-        print(f"🔊 网络音频URL格式检查: {'有效' if '://' in url else '可能无效'}")
-        if len(url) > 200:
-            print(f"🔊 URL过长，截断显示: {url[:200]}...")
-        else:
-            print(f"🔊 完整URL: {url}")
-
-    def _play():
-        try:
-            # 检查ffplay是否可用
-            result = subprocess.run(['which', 'ffplay'], capture_output=True)
-            if result.returncode != 0:
-                print("音频播放器 ffplay 未安装，请运行: sudo apt install ffmpeg")
-                return
-
-            # 使用ffplay直接播放网络音频（无需下载）
-            # -autoexit: 播放完成后自动退出
-            # -nodisp: 不显示视频窗口
-            # -loglevel quiet: 静默模式，不输出日志
-            print("🔊 开始使用ffplay播放网络音频...")
-            result = subprocess.run([
-                'ffplay',
-                '-autoexit',
-                '-nodisp',
-                '-loglevel', 'quiet',
-                url
-            ], capture_output=True, timeout=30)
-
-            if result.returncode != 0:
-                print(f"🔊 音频播放失败，返回码: {result.returncode}")
-                if result.stderr:
-                    error_msg = result.stderr.decode('utf-8', errors='ignore')
-                    print(f"🔊 错误信息: {error_msg}")
-
-                    # 分析常见错误
-                    if "Connection refused" in error_msg:
-                        print("🔊 错误类型: 连接被拒绝 - 网络问题或服务器不可用")
-                    elif "404" in error_msg:
-                        print("🔊 错误类型: 404 Not Found - 音频文件不存在")
-                    elif "403" in error_msg:
-                        print("🔊 错误类型: 403 Forbidden - 访问被拒绝")
-                    elif "timed out" in error_msg.lower():
-                        print("🔊 错误类型: 连接超时 - 网络延迟或服务器响应慢")
-                    elif "no such file" in error_msg.lower():
-                        print("🔊 错误类型: 文件不存在 - URL可能无效")
-                    else:
-                        print("🔊 错误类型: 未知错误")
-
-                # 如果ffplay失败，回退到下载+播放的方式
-                print("🔊 尝试使用备用播放方式...")
-                _play_fallback(url)
-            else:
-                print("🔊 音频播放完成")
-
-        except subprocess.TimeoutExpired:
-            print("🔊 音频播放超时 - ffplay进程运行超过30秒")
-            print(f"🔊 超时URL: {url}")
-        except Exception as e:
-            print(f"🔊 播放音频失败: {e}")
-            print(f"🔊 失败URL: {url}")
-            import traceback
-            print(f"🔊 详细错误信息: {traceback.format_exc()}")
-
-    def _play_fallback(fallback_url: str):
-        """备用播放方式：下载后播放"""
-        print(f"🔊 开始备用播放方式 - URL: {fallback_url}")
-        try:
-            # 下载音频文件
-            print("🔊 开始下载音频文件...")
-            response = requests.get(fallback_url, timeout=10)
-            response.raise_for_status()
-            print(f"🔊 下载成功，文件大小: {len(response.content)} bytes")
-
-            # 创建临时文件
-            with tempfile.NamedTemporaryFile(suffix='.audio', delete=False, delete_on_close=False) as f:
-                f.write(response.content)
-                temp_path = f.name
-            print(f"🔊 临时文件创建成功: {temp_path}")
-
-            # 使用ffplay播放本地文件
-            print("🔊 开始播放本地音频文件...")
-            result = subprocess.run([
-                'ffplay',
-                '-autoexit',
-                '-nodisp',
-                '-loglevel', 'quiet',
-                temp_path
-            ], capture_output=True, timeout=30)
-
-            # 清理临时文件
-            try:
-                os.unlink(temp_path)
-                print("🔊 临时文件已清理")
-            except Exception as e:
-                print(f"🔊 清理临时文件失败: {e}")
-
-            if result.returncode != 0:
-                print(f"🔊 备用播放方式失败，返回码: {result.returncode}")
-                if result.stderr:
-                    error_msg = result.stderr.decode('utf-8', errors='ignore')
-                    print(f"🔊 备用播放错误信息: {error_msg}")
-            else:
-                print("🔊 备用播放方式成功")
-
-        except requests.exceptions.RequestException as e:
-            print(f"🔊 下载音频文件失败: {e}")
-            print(f"🔊 下载失败URL: {fallback_url}")
-        except Exception as e:
-            print(f"🔊 备用播放方式失败: {e}")
-
-    # 在新线程中播放音频，避免阻塞UI
-    threading.Thread(target=_play, daemon=True).start()
+from ui_constants import COLORS, FONTS, SPACING, PAD
 
 
 class DictionaryApp:
@@ -182,6 +64,8 @@ class DictionaryApp:
         self.auto_hide_timer = None
         self.original_geometry = None
         self.last_mouse_position = None  # 记录最后一次取词位置
+        # 用户是否手动点过置顶按钮（若是，取词后的临时置顶不做自动恢复）
+        self._user_manually_pinned = False
 
         # 记录当前窗口尺寸，用于记忆用户调整的大小
         # 初始化为默认尺寸
@@ -194,61 +78,99 @@ class DictionaryApp:
         # 单词状态管理器
         self.word_state_manager = WordStateManager()
 
+        # LLM 多轮对话控制器
+        self._llm_input = None  # 追问输入框
+        self.conv = LLMConversation(
+            system_prompt=(
+                "你是一个中英文语言理解助手，能解释单词、短语、句子和段落，"
+                "并支持多轮追问和深入解释。"
+            ),
+            chat=llm_chat_messages,
+            on_answer=lambda ans: self.root.after(
+                0, lambda a=ans: self._llm_commit(a)
+            ),
+            on_error=lambda err: self.root.after(
+                0, lambda e=err: self._llm_error(e)
+            ),
+        )
+
         # 设置窗口初始属性
         self.root.attributes('-topmost', False)  # 初始不在最上层
         self.root.attributes('-alpha', 0.95)     # 设置透明度
 
         # 绑定窗口焦点事件
         self.root.bind('<FocusIn>', self.on_focus_in)
-        self.root.bind('<FocusOut>', self.on_focus_out)
 
         # 顶部按钮区域
-        self.top_frame = Frame(root, pady=5)
+        self.top_frame = Frame(root, pady=PAD["pad_s"])
         self.top_frame.pack(fill=X)
+
+        # 取词模式状态灯（绿点亮 = 取词运行中）
+        self.capture_led = Canvas(self.top_frame, width=12, height=12,
+                                  highlightthickness=0, bg=self.root.cget("bg"))
+        self._led_item = self.capture_led.create_oval(
+            2, 2, 10, 10, fill=COLORS["text_disabled"], outline=""
+        )
+        self.capture_led.pack(side=LEFT, padx=(PAD["pad_md"], PAD["pad_xs"]))
 
         # 取词模式按钮
         self.capture_btn = Button(self.top_frame, text="启动取词模式",
                                  command=self.toggle_capture_mode,
-                                 bg="lightgreen", font=("Arial", 10))
-        self.capture_btn.pack(side=LEFT, padx=10)
+                                 bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
+                                 font=FONTS["caption"])
+        self.capture_btn.pack(side=LEFT, padx=PAD["pad_md"])
 
         # 状态标签
         self.status_label = Label(self.top_frame, text="取词模式: 关闭",
-                                 font=("Arial", 10), fg="gray")
-        self.status_label.pack(side=LEFT, padx=10)
+                                 font=FONTS["caption"], fg=COLORS["text_secondary"])
+        self.status_label.pack(side=LEFT, padx=PAD["pad_md"])
 
         # 鼠标悬停取词选项
         self.enable_hover_var = BooleanVar(value=False)  # 默认禁用鼠标悬停
         self.hover_check = Checkbutton(self.top_frame, text="启用鼠标悬停取词",
                                        variable=self.enable_hover_var,
-                                       font=("Arial", 9),
+                                       font=FONTS["caption"],
                                        command=self.toggle_hover_capture)
-        self.hover_check.pack(side=LEFT, padx=10)
+        self.hover_check.pack(side=LEFT, padx=PAD["pad_md"])
 
         # 窗口控制按钮
         self.window_btn = Button(self.top_frame, text="置顶显示",
                                 command=self.toggle_window_topmost,
-                                bg="lightblue", font=("Arial", 9))
-        self.window_btn.pack(side=RIGHT, padx=5)
+                                bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
+                                font=FONTS["caption"])
+        self.window_btn.pack(side=RIGHT, padx=PAD["pad_s"])
 
         self.hide_btn = Button(self.top_frame, text="隐藏窗口",
                                command=self.hide_window,
-                               bg="lightyellow", font=("Arial", 9))
-        self.hide_btn.pack(side=RIGHT, padx=5)
+                               bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
+                               font=FONTS["caption"])
+        self.hide_btn.pack(side=RIGHT, padx=PAD["pad_s"])
 
         # 输入区域
-        self.input_frame = Frame(root, pady=10)
+        self.input_frame = Frame(root, pady=PAD["pad_md"])
         self.input_frame.pack(fill=X)
 
-        self.entry = Entry(self.input_frame, font=("Arial", 14))
-        self.entry.pack(side=LEFT, fill=X, expand=True, padx=(10, 5))
+        # P3-4 搜索历史（Combobox + 最近 20 条，JSON 持久化）
+        self.history = SearchHistory()
+        self.entry = ttk.Combobox(self.input_frame, font=FONTS["input"],
+                                  values=self.history.list())
+        self.entry.pack(side=LEFT, fill=X, expand=True, padx=(PAD["pad_md"], PAD["pad_s"]))
         self.entry.bind("<Return>", lambda e: self.search())
+        self.entry.bind("<<ComboboxSelected>>", lambda e: self.search())
+        self.entry.bind("<FocusIn>", lambda e: self.entry.configure(values=self.history.list()))
 
-        self.btn = Button(self.input_frame, text="Search", command=self.search)
-        self.btn.pack(side=RIGHT, padx=(5, 10))
+        self.btn = Button(self.input_frame, text="Search", command=self.search,
+                          bg=COLORS["primary"], fg=COLORS["primary_text_on"],
+                          font=FONTS["small"], relief=FLAT)
+        self.btn.pack(side=RIGHT, padx=(PAD["pad_s"], 0))
+
+        self.llm_btn = Button(self.input_frame, text="LLM", command=self.search_llm,
+                              bg=COLORS["primary"], fg=COLORS["primary_text_on"],
+                              font=FONTS["small"], relief=FLAT)
+        self.llm_btn.pack(side=RIGHT, padx=(0, PAD["pad_md"]))
 
         # 结果区域
-        self.result_frame = Frame(root, padx=10, pady=10)
+        self.result_frame = Frame(root, padx=PAD["result_h"], pady=PAD["result_v"])
         self.result_frame.pack(fill=BOTH, expand=True)
 
         self.canvas = Canvas(self.result_frame)
@@ -280,7 +202,7 @@ class DictionaryApp:
             self.canvas.yview_scroll(delta, "units")
 
             # 调试信息
-            print(f"🔍 滚轮事件: delta={event.delta}, 滚动量={delta}")
+            logger.debug(f"🔍 滚轮事件: delta={event.delta}, 滚动量={delta}")
 
             # 返回"break"阻止事件进一步传播
             return "break"
@@ -291,16 +213,17 @@ class DictionaryApp:
             if event.num == 4:
                 # 向上滚动
                 self.canvas.yview_scroll(-1, "units")
-                print("🔍 Linux滚轮事件: 向上滚动")
+                logger.debug("🔍 Linux滚轮事件: 向上滚动")
             elif event.num == 5:
                 # 向下滚动
                 self.canvas.yview_scroll(1, "units")
-                print("🔍 Linux滚轮事件: 向下滚动")
+                logger.debug("🔍 Linux滚轮事件: 向下滚动")
 
             # 返回"break"阻止事件进一步传播
             return "break"
 
-        # 使用bind_all绑定到整个应用程序，确保所有组件都能接收滚轮事件
+        # 使用bind_all绑定到整个应用程序，确保所有组件都能接收滚轮事件。
+        # 只在全局绑定一次，避免与组件级绑定叠加导致同一滚轮事件被滚动多次。
         self.root.bind_all("<MouseWheel>", _on_mousewheel)
         self.root.bind_all("<Button-4>", _on_linux_mousewheel)  # Linux向上滚动
         self.root.bind_all("<Button-5>", _on_linux_mousewheel)  # Linux向下滚动
@@ -308,100 +231,128 @@ class DictionaryApp:
         # 为Canvas启用焦点，确保能接收滚轮事件
         self.canvas.focus_set()
 
-        # 为Canvas绑定滚轮事件，确保能接收事件
-        self.canvas.bind("<MouseWheel>", _on_mousewheel)
-        self.canvas.bind("<Button-4>", _on_linux_mousewheel)
-        self.canvas.bind("<Button-5>", _on_linux_mousewheel)
-
-        # 为滚动条绑定滚轮事件
-        self.scrollbar.bind("<MouseWheel>", _on_mousewheel)
-        self.scrollbar.bind("<Button-4>", _on_linux_mousewheel)
-        self.scrollbar.bind("<Button-5>", _on_linux_mousewheel)
-
-        # 为结果框架绑定滚轮事件
-        self.result_frame.bind("<MouseWheel>", _on_mousewheel)
-        self.result_frame.bind("<Button-4>", _on_linux_mousewheel)
-        self.result_frame.bind("<Button-5>", _on_linux_mousewheel)
-
-        # 为可滚动框架绑定滚轮事件
-        self.scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
-        self.scrollable_frame.bind("<Button-4>", _on_linux_mousewheel)
-        self.scrollable_frame.bind("<Button-5>", _on_linux_mousewheel)
-
         self.canvas.pack(side=LEFT, fill=BOTH, expand=True)
         self.scrollbar.pack(side=RIGHT, fill=Y)
 
         self.current_data = None
 
-        # 设置取词回调
-        on_capture(self.handle_captured_word)
+        # 词典结果内容渲染器（P2-5）：把查询数据渲染进滚动区域
+        self.renderer = ResultRenderer(
+            self.scrollable_frame,
+            get_frame_width=lambda: self.current_window_width,
+        )
+
+        # 取词模式控制（服务生命周期与状态）
+        self.capture_mode = False  # 兼容旧字段，由 controller 同步
+        self.capture = CaptureController(
+            on_captured_word=self.handle_captured_word
+        )
+        # 搜索分流控制
+        self.search_ctrl = SearchController()
 
         # 窗口关闭时停止取词服务
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # 初始化换行标签列表
-        self.wraplength_labels = []
+        # P3-1 应用内快捷键（窗口聚焦即生效；系统级全局热键依赖 Wayland 桌面注册）
+        self._register_shortcuts()
+        # P3-5 初始焦点落到输入框
+        self.entry.focus_set()
 
     def toggle_hover_capture(self):
         """切换鼠标悬停取词设置"""
-        if self.capture_mode:
-            # 如果取词模式正在运行，需要重启服务以应用新设置
-            stop_service()
-            time.sleep(0.1)  # 短暂等待确保服务完全停止
-            start_service(enable_mouse_hover=self.enable_hover_var.get())
-
-            status_text = "运行中" if self.enable_hover_var.get() else "运行中(仅选中取词)"
-            self.status_label.config(text=f"取词模式: {status_text}")
+        self.capture.hover_enabled = self.enable_hover_var.get()
+        if self.capture.running:
+            # 取词模式正在运行，重启服务以应用新设置
+            self.capture.apply_hover()
+            self._render_capture_state()
 
     def toggle_capture_mode(self):
         """切换取词模式"""
-        if not self.capture_mode:
+        self.capture.hover_enabled = self.enable_hover_var.get()
+        if not self.capture.running:
             # 启动取词模式
             try:
-                start_service(enable_mouse_hover=self.enable_hover_var.get())
-                self.capture_mode = True
-                self.capture_btn.config(text="停止取词模式", bg="lightcoral")
-
-                status_text = "运行中" if self.enable_hover_var.get() else "运行中(仅选中取词)"
-                self.status_label.config(text=f"取词模式: {status_text}", fg="green")
+                self.capture.start()
+                self._render_capture_state()
             except Exception as e:
                 messagebox.showerror("错误", f"启动取词服务失败: {e}")
         else:
             # 停止取词模式
-            stop_service()
-            self.capture_mode = False
-            self.capture_btn.config(text="启动取词模式", bg="lightgreen")
-            self.status_label.config(text="取词模式: 关闭", fg="gray")
+            self.capture.stop()
+            self._render_capture_state()
+
+    def _render_capture_state(self):
+        """根据 controller 状态刷新取词相关 UI。"""
+        self.capture_mode = self.capture.running
+        status_text = f"取词模式: {self.capture.status_text}"
+        if self.capture.running:
+            self.capture_btn.config(
+                text="停止取词模式",
+                bg=COLORS["danger_bg"], fg=COLORS["danger_text"],
+            )
+            self.status_label.config(
+                text=status_text, fg=COLORS["success_text"]
+            )
+            self._set_led(True)
+        else:
+            self.capture_btn.config(
+                text="启动取词模式",
+                bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
+            )
+            self.status_label.config(
+                text=status_text, fg=COLORS["text_disabled"]
+            )
+            self._set_led(False)
+
+    def _set_led(self, on: bool):
+        """更新取词状态灯颜色"""
+        color = COLORS["success_led"] if on else COLORS["text_disabled"]
+        self.capture_led.itemconfig(self._led_item, fill=color)
 
     def toggle_window_topmost(self):
         """切换窗口置顶状态"""
         current_state = self.root.attributes('-topmost')
         new_state = not current_state
         self.root.attributes('-topmost', new_state)
+        # 用户主动操作置顶，后续取词的临时置顶不再自动恢复
+        self._user_manually_pinned = True
 
         if new_state:
-            self.window_btn.config(text="取消置顶", bg="lightcoral")
+            self.window_btn.config(
+                text="取消置顶", bg=COLORS["primary"],
+                fg=COLORS["primary_text_on"],
+            )
         else:
-            self.window_btn.config(text="置顶显示", bg="lightblue")
+            self.window_btn.config(
+                text="置顶显示", bg=COLORS["neutral_bg"],
+                fg=COLORS["text_secondary"],
+            )
 
     def hide_window(self):
         """隐藏窗口"""
         self.root.withdraw()  # 隐藏窗口
         self.window_visible = False
-        self.hide_btn.config(text="显示窗口", bg="lightgreen")
+        self.hide_btn.config(
+            text="显示窗口", bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"]
+        )
 
         # 取消之前的定时器
         if self.auto_hide_timer:
             self.root.after_cancel(self.auto_hide_timer)
             self.auto_hide_timer = None
 
+    def _register_shortcuts(self):
+        """P3-1 应用内快捷键：Esc 隐藏、Ctrl+Shift+C 开关取词。"""
+        self.root.bind_all("<Escape>", lambda e: self.hide_window())
+        self.root.bind_all("<Control-Shift-c>", lambda e: self.toggle_capture_mode())
+
     def show_window(self):
         """显示窗口"""
         window_width = self.current_window_width
         window_height = self.current_window_height
 
-        print(f"📐 [show_window] 初始: screen={self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}, window={window_width}x{window_height}")
-        print(f"📐 [show_window] last_mouse_position={self.last_mouse_position}")
+        logger.debug(f"📐 [show_window] 初始: screen={self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}, window={window_width}x{window_height}")
+        logger.debug(f"📐 [show_window] last_mouse_position={self.last_mouse_position}")
 
         # Facade：解析桌面布局 -> 判桌面 -> 算窗口几何。
         # 远离取词点放置：窗口落到对角远端象限，避免遮挡鼠标周围的文档。
@@ -414,19 +365,21 @@ class DictionaryApp:
         x, y = placement.x, placement.y
         target_desktop = placement.desktop
 
-        print(f"📐 [show_window] 最终 geometry: {window_width}x{window_height}+{x}+{y}, target_desktop={target_desktop}")
+        logger.debug(f"📐 [show_window] 最终 geometry: {window_width}x{window_height}+{x}+{y}, target_desktop={target_desktop}")
 
         self.root.deiconify()
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.window_visible = True
-        self.hide_btn.config(text="隐藏窗口", bg="lightyellow")
+        self.hide_btn.config(
+            text="隐藏窗口", bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"]
+        )
         self.root.update_idletasks()
 
         if target_desktop is not None:
-            print(f"📐 [show_window] 安排 100ms 后调用 _ensure_window_sticky()")
+            logger.debug(f"📐 [show_window] 安排 100ms 后调用 _ensure_window_sticky()")
             self.root.after(100, self._ensure_window_sticky)
         else:
-            print(f"📐 [show_window] target_desktop 为 None, 不移动桌面")
+            logger.debug(f"📐 [show_window] target_desktop 为 None, 不移动桌面")
 
     def _find_x11_window_id(self):
         """用 xdotool 找到 Dictionary 窗口的 X11 Window ID（十进制）
@@ -461,13 +414,13 @@ class DictionaryApp:
         虚拟桌面上都可见（翻译工具：取词窗口随取词出现）。
         """
         try:
-            print(f"🖥️  [_ensure_window_sticky] 开始（ClientMessage 通知）")
+            logger.debug(f"🖥️  [_ensure_window_sticky] 开始（ClientMessage 通知）")
 
             win_id = self._find_x11_window_id()
-            print(f"🖥️  [_ensure_window_sticky] 找到 X11 Window ID: {win_id}")
+            logger.debug(f"🖥️  [_ensure_window_sticky] 找到 X11 Window ID: {win_id}")
 
             if win_id is None:
-                print(f"🖥️  [_ensure_window_sticky] 窗口还没就绪, 200ms 后重试")
+                logger.debug(f"🖥️  [_ensure_window_sticky] 窗口还没就绪, 200ms 后重试")
                 self.root.after(200, self._ensure_window_sticky)
                 return
 
@@ -488,28 +441,28 @@ class DictionaryApp:
                 event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
             )
             d.flush()
-            print(f"🖥️  [_ensure_window_sticky] 已发送 sticky ClientMessage")
+            logger.debug(f"🖥️  [_ensure_window_sticky] 已发送 sticky ClientMessage")
 
             r = subprocess.run(
                 ['xdotool', 'windowactivate', win_id],
                 capture_output=True, text=True, timeout=3
             )
-            print(f"🖥️  [_ensure_window_sticky] windowactivate: rc={r.returncode}, stderr={r.stderr.strip()}")
+            logger.debug(f"🖥️  [_ensure_window_sticky] windowactivate: rc={r.returncode}, stderr={r.stderr.strip()}")
 
             verify = subprocess.run(
                 ['xprop', '-id', win_id, '_NET_WM_STATE'],
                 capture_output=True, text=True, timeout=3
             )
-            print(f"🖥️  [_ensure_window_sticky] 验证: {verify.stdout.strip()}")
+            logger.debug(f"🖥️  [_ensure_window_sticky] 验证: {verify.stdout.strip()}")
 
             self.root.deiconify()
             self.root.lift()
             self.root.focus_force()
-            print(f"🖥️  [_ensure_window_sticky] 完成")
+            logger.debug(f"🖥️  [_ensure_window_sticky] 完成")
         except Exception as e:
-            print(f"🖥️  [_ensure_window_sticky] 异常: {e}")
+            logger.warning(f"🖥️  [_ensure_window_sticky] 异常: {e}")
             import traceback
-            traceback.print_exc()
+            logger.debug(traceback.format_exc())
 
     def on_focus_in(self, event=None):
         """窗口获得焦点时的处理"""
@@ -517,16 +470,6 @@ class DictionaryApp:
         if self.auto_hide_timer:
             self.root.after_cancel(self.auto_hide_timer)
             self.auto_hide_timer = None
-
-    def on_focus_out(self, event=None):
-        """窗口失去焦点时的处理"""
-        # 窗口显示逻辑只根据取词状态决定，不自动隐藏
-        pass
-
-    def auto_hide_if_not_focused(self):
-        """如果窗口没有焦点，自动隐藏"""
-        # 窗口显示逻辑只根据取词状态决定，不自动隐藏
-        pass
 
     def clean_punctuation(self, text):
         """清理文本前后的标点符号"""
@@ -546,52 +489,6 @@ class DictionaryApp:
 
         return text.strip()
 
-    def adjust_window_position(self):
-        """智能调整窗口位置，避免遮挡取词位置"""
-        if not self.last_mouse_position:
-            return
-
-        mouse_x, mouse_y = self.last_mouse_position
-
-        # 获取屏幕尺寸
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-
-        # 使用记忆的窗口尺寸
-        window_width = self.current_window_width
-        window_height = self.current_window_height
-
-        # 计算安全距离（避免窗口紧贴屏幕边缘）
-        margin = 20
-
-        # 根据鼠标位置选择最佳显示区域
-        # 将屏幕分为4个象限，选择远离鼠标的象限
-        screen_center_x = screen_width // 2
-        screen_center_y = screen_height // 2
-
-        if mouse_x < screen_center_x and mouse_y < screen_center_y:
-            # 鼠标在左上角，窗口放在右下角
-            x = screen_width - window_width - margin
-            y = screen_height - window_height - margin
-        elif mouse_x >= screen_center_x and mouse_y < screen_center_y:
-            # 鼠标在右上角，窗口放在左下角
-            x = margin
-            y = screen_height - window_height - margin
-        elif mouse_x < screen_center_x and mouse_y >= screen_center_y:
-            # 鼠标在左下角，窗口放在右上角
-            x = screen_width - window_width - margin
-            y = margin
-        else:
-            # 鼠标在右下角，窗口放在左上角
-            x = margin
-            y = margin
-
-        # 应用新的窗口位置
-        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-        # 确保窗口在屏幕范围内
-        self.root.update_idletasks()
-
     def set_mouse_position(self, x, y):
         """记录鼠标取词位置"""
         self.last_mouse_position = (x, y)
@@ -602,11 +499,11 @@ class DictionaryApp:
         result = self.word_state_manager.handle_new_word(word)
 
         # 调试信息
-        print(f"DEBUG DictionaryApp: 处理结果={result}")
+        logger.debug(f"DEBUG DictionaryApp: 处理结果={result}")
 
         if not result['should_process']:
             # 不需要处理的情况：空单词或相同单词
-            print(f"DEBUG DictionaryApp: 跳过处理，原因: {result['reason']}")
+            logger.debug(f"DEBUG DictionaryApp: 跳过处理，原因: {result['reason']}")
             return
 
         # 记录鼠标位置（如果提供了）
@@ -618,28 +515,29 @@ class DictionaryApp:
 
     def _process_captured_word(self, word):
         """在GUI线程中处理捕获的单词"""
-        print(f"🔍 [_process_captured_word] 开始处理捕获的单词: '{word}'")
+        logger.info(f"🔍 [_process_captured_word] 开始处理捕获的单词: '{word}'")
 
         # 状态管理器已经处理了单词比较，这里直接处理新单词
-        print(f"DEBUG DictionaryApp: 处理新单词 '{word}'")
+        logger.debug(f"DEBUG DictionaryApp: 处理新单词 '{word}'")
 
         # 更新状态管理器中的当前单词
         self.word_state_manager.update_current_word(word)
 
         # 显示窗口（只根据取词状态决定）
-        print("🔍 [_process_captured_word] 调用show_window()")
+        logger.debug("🔍 [_process_captured_word] 调用show_window()")
         self.show_window()
 
-        # 临时置顶窗口以便查看结果
+        # 临时置顶窗口以便查看结果（记录为"自动置顶"，可被自动恢复）
         self.root.attributes('-topmost', True)
-        print("🔍 [_process_captured_word] 窗口已置顶")
+        self._user_manually_pinned = False
+        logger.debug("🔍 [_process_captured_word] 窗口已置顶")
 
         # 更新输入框（只有不同单词才更新）
         self.entry.delete(0, END)
         self.entry.insert(0, word)
 
         # 自动搜索
-        print("🔍 [_process_captured_word] 开始自动搜索")
+        logger.debug("🔍 [_process_captured_word] 开始自动搜索")
         self.search()
 
         # 显示捕获提示
@@ -648,27 +546,61 @@ class DictionaryApp:
         # 3秒后取消置顶（如果用户没有手动置顶）
         self.root.after(3000, self._restore_window_state)
 
-        print("🔍 [_process_captured_word] 单词处理完成")
+        logger.info("🔍 [_process_captured_word] 单词处理完成")
 
     def _restore_window_state(self):
         """恢复窗口状态"""
-        # 如果用户没有手动置顶，取消置顶
-        if not self.root.attributes('-topmost'):
+        # 用户手动置顶过：尊重用户操作，不自动取消
+        if self._user_manually_pinned:
             return
-
-        # 检查窗口按钮状态
-        if self.window_btn.cget('text') == "置顶显示":
+        # 仅当窗口处于置顶状态时才取消（取词触发的临时置顶）
+        if self.root.attributes('-topmost'):
             self.root.attributes('-topmost', False)
 
     def show_capture_notification(self, word):
         """显示捕获成功的通知"""
         # 创建临时通知标签
         notification = Label(self.top_frame, text=f"已捕获: {word}",
-                           font=("Arial", 10), fg="blue", bg="lightyellow")
-        notification.pack(side=RIGHT, padx=10)
+                           font=FONTS["caption"], fg=COLORS["primary"],
+                           bg=COLORS["card"])
+        notification.pack(side=RIGHT, padx=PAD["pad_md"])
 
         # 3秒后自动移除通知
         self.root.after(3000, notification.destroy)
+
+    # P3-2/P3-6：加载 spinner 帧 + 进度文案
+    _SPINNER_FRAMES = ["|", "/", "-", "\\"]
+
+    def _make_spinner(self, parent, text):
+        """创建带 spinning 动画的进度标签。
+
+        返回 (label, stop)。stop() 停止动画并销毁标签，幂等。
+        """
+        label = Label(parent, text=f"{self._SPINNER_FRAMES[0]} {text}",
+                      font=FONTS["label"], fg=COLORS["text_secondary"])
+        label.pack(anchor=W, pady=PAD["pad_md"])
+        state = {"running": True}
+
+        def _spin(idx):
+            if not state["running"]:
+                return
+            label.config(text=f"{self._SPINNER_FRAMES[idx % 4]} {text}")
+            state["timer"] = label.after(120, lambda: _spin(idx + 1))
+
+        def _stop():
+            state["running"] = False
+            try:
+                if state.get("timer"):
+                    label.after_cancel(state["timer"])
+            except Exception:
+                pass
+            try:
+                label.destroy()
+            except Exception:
+                pass
+
+        _spin(0)
+        return label, _stop
 
     def search(self):
         word = self.entry.get().strip()
@@ -678,287 +610,145 @@ class DictionaryApp:
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
 
-        loading_label = Label(self.scrollable_frame, text="Loading...", font=("Arial", 12))
-        loading_label.pack()
+        _, stop_spinner = self._make_spinner(self.scrollable_frame, f"正在查词: {word}")
         self.root.update()
 
-        is_multi_word = len(word.split()) >= 2
-        is_long_text = len(word) > 80
+        def on_result(data):
+            self.history.add(word)
+            self.root.after(0, lambda: (stop_spinner(), self._display_result(data)))
 
-        def call_llm_translate():
-            loading_label.config(text="AI 翻译中...")
-            llm_result = llm_chat(
-                prompt=f"请翻译以下文本，只输出翻译结果，不要解释：\n{word}",
-                system_prompt="你是一个中英文互译的翻译助手，能够处理单词、短语、句子和段落。",
-            )
-            return {
-                "word": word,
-                "is_phrase": True,
-                "translation": llm_result.strip(),
-                "result_type": "llm_translation",
-                "from_language": "",
-                "to_language": "",
-            }
+        def on_llm(w):
+            self.root.after(0, lambda: (stop_spinner(), self._switch_to_llm_chat(w)))
 
-        def iciba_phrase_is_good(data):
-            """判断 iciba 短语翻译是否真的有效"""
-            if data.get("result_type") == "keyword_detection":
-                return False
-            if data.get("word") and data["word"] != word and data["word"] in ("在线翻译",):
-                return False
-            if not data.get("translation"):
-                return False
-            return True
+        def on_error(ex):
+            self.root.after(0, lambda: (stop_spinner(), self._search_error(ex)))
 
-        def search_thread():
-            if not is_multi_word:
-                try:
-                    data = query_word(word)
-                    self.root.after(0, lambda d=data: self._display_result(d, loading_label))
-                except Exception as ex:
-                    err = ex
-                    self.root.after(0, lambda e=err: self._search_error(e, loading_label))
-                return
+        self.search_ctrl.get(word, on_result=on_result, on_llm=on_llm, on_error=on_error)
 
-            if is_long_text:
-                try:
-                    data = call_llm_translate()
-                    self.root.after(0, lambda d=data: self._display_result(d, loading_label))
-                except Exception as ex:
-                    err = ex
-                    self.root.after(0, lambda e=err: self._search_error(e, loading_label))
-                return
-
-            try:
-                iciba_data = query_word(word)
-            except Exception:
-                iciba_data = None
-
-            if iciba_data and iciba_phrase_is_good(iciba_data):
-                self.root.after(0, lambda d=iciba_data: self._display_result(d, loading_label))
-                return
-
-            try:
-                data = call_llm_translate()
-                self.root.after(0, lambda d=data: self._display_result(d, loading_label))
-            except Exception as ex:
-                err = ex
-                if iciba_data:
-                    self.root.after(0, lambda d=iciba_data: self._display_result(d, loading_label))
-                else:
-                    self.root.after(0, lambda e=err: self._search_error(e, loading_label))
-
-        threading.Thread(target=search_thread, daemon=True).start()
-
-    def _display_result(self, data, loading_label):
+    def _display_result(self, data):
         """显示搜索结果"""
-        loading_label.destroy()
         self.current_data = data
         self.display_result(data)
 
         # 强制触发Canvas resize事件，确保首次显示时正确填充
         self.root.after(50, self._force_canvas_resize)
 
-    def _search_error(self, error, loading_label):
-        """处理搜索错误"""
-        loading_label.destroy()
-        messagebox.showerror("Error", str(error))
+    def _search_error(self, error):
+        """P3-3：搜索错误内联为红色条带，不再弹 messagebox。"""
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+
+        bar = Frame(self.scrollable_frame, bg=COLORS["danger_bg"])
+        bar.pack(fill=X, pady=PAD["pad_md"])
+        Label(bar, text=f"⚠️ 查询失败：{error}", font=FONTS["label"],
+              fg=COLORS["danger_text"], bg=COLORS["danger_bg"]).pack(anchor=W, padx=PAD["pad_md"], pady=PAD["pad_s"])
+
+        self.root.after(50, self._force_canvas_resize)
+
+    def _switch_to_llm_chat(self, word):
+        """从搜索流程切换到 LLM 多轮对话视图"""
+        self._start_llm_chat(word)
+
+    def search_llm(self):
+        """普通翻译区点击 LLM：将输入框内容直接用 LLM 对话翻译"""
+        word = self.entry.get().strip()
+        if not word:
+            return
+        self._start_llm_chat(word)
+
+    def _start_llm_chat(self, word):
+        """以 word 为初始问题开启 LLM 对话"""
+        self.current_data = {"result_type": "llm_translation", "word": word}
+        self.conv.start(word)
+        self._render_llm_chat(loading=True)
+
+    def _ask_llm(self):
+        """提交追问"""
+        if not self._llm_input:
+            return
+        question = self._llm_input.get().strip()
+        if not self.conv.ask(question):
+            return  # 输入为空或上一轮仍在加载
+        self._render_llm_chat(loading=True)
+
+    def _llm_commit(self, ans):
+        """主线程接收 LLM 回答：写入历史并渲染"""
+        self.conv.append_assistant(ans)
+        if isinstance(self.current_data, dict):
+            self.current_data["translation"] = ans
+        self._render_llm_chat(loading=False)
+
+    def _llm_error(self, error):
+        self.conv.append_assistant(f"⚠️ {error}")
+        self._render_llm_chat(loading=False)
+
+    def _chat_bubble_html(self, content: str, user: bool):
+        """把对话内容包成统一气泡样式的 HTML（用户/AI 共用一种气泡框架）"""
+        esc = html.escape(content).replace("\n", "<br>")
+        if user:
+            style = (f"background:{COLORS['bubble_user']}; color:{COLORS['bubble_user_text']};"
+                     "padding:8px 12px; border-radius:6px; text-align:left;")
+        else:
+            style = (f"background:{COLORS['bubble_ai']}; color:{COLORS['bubble_ai_text']};"
+                     "padding:8px 12px; border-radius:6px;")
+        return f'<div style="{style}">{esc}</div>'
+
+    def _render_llm_chat(self, loading):
+        """渲染 LLM 对话历史与底部追问输入行"""
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+
+        Label(self.scrollable_frame, text="AI 多轮对话（可继续追问）",
+              font=FONTS["label_bold"], fg=COLORS["primary"]).pack(anchor=W, pady=(0, PAD["pad_l"]))
+
+        latest = self.conv.latest_role()
+
+        for msg in self.conv.history:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "user":
+                bubble = self._chat_bubble_html(content, user=True)
+                viewer = HtmlFrame(self.scrollable_frame, scrollbar=False,
+                                   messages_are_links=True, contextmenu=False,
+                                   highlight_words=False)
+                viewer.load_html(bubble)
+                viewer.pack(fill=X, anchor=E, pady=PAD["pad_xs"])
+            else:
+                md = markdown.markdown(content)
+                html = self._chat_bubble_html(md, user=False)
+                viewer = HtmlFrame(self.scrollable_frame, scrollbar=False,
+                                   messages_are_links=True, contextmenu=False,
+                                   highlight_words=False)
+                viewer.load_html(html)
+                viewer.pack(fill=X, anchor=W, pady=PAD["pad_xs"])
+
+        if loading and latest == "user":
+            Label(self.scrollable_frame, text="AI 思考中...",
+                  font=FONTS["italic"], fg=COLORS["text_disabled"]).pack(anchor=W, pady=PAD["pad_xs"])
+
+        self._render_llm_followup_input()
+        self.root.update_idletasks()
+        self.root.after(50, self._force_canvas_resize)
+
+    def _render_llm_followup_input(self):
+        """渲染底部追问输入行"""
+        row = Frame(self.scrollable_frame)
+        row.pack(fill=X, pady=(PAD["pad_lg"], 0))
+
+        self._llm_input = Entry(row, font=FONTS["input"])
+        self._llm_input.pack(side=LEFT, fill=X, expand=True, padx=(0, PAD["pad_m"]))
+        self._llm_input.bind("<Return>", lambda e: self._ask_llm())
+
+        ask_btn = Button(row, text="追问", command=self._ask_llm,
+                         bg=COLORS["primary"], fg=COLORS["primary_text_on"],
+                         font=FONTS["small"], relief=FLAT, cursor="hand2")
+        ask_btn.pack(side=RIGHT)
+
+        self._llm_input.focus_set()
 
     def display_result(self, data):
-        word = data.get("word", "")
-        result_type = data.get("result_type", "")
-        is_phrase = data.get("is_phrase", False)
-
-        frame_width = self.scrollable_frame.winfo_width()
-        if frame_width < 100:
-            frame_width = self.current_window_width - 40
-        text_wraplength = frame_width - 20
-
-        is_long_text = len(word) > 80
-
-        if is_long_text:
-            word_label = Label(self.scrollable_frame, text=word,
-                             font=("Arial", 11, "italic"), fg="#666",
-                             wraplength=text_wraplength, justify=LEFT)
-            word_label.pack(anchor=W, pady=(0, 10))
-            sep = Frame(self.scrollable_frame, height=2, bg="#ddd")
-            sep.pack(fill=X, pady=(0, 10))
-        elif is_phrase:
-            word_label = Label(self.scrollable_frame, text=word,
-                             font=("Arial", 16, "bold"), wraplength=text_wraplength, justify=LEFT)
-            word_label.pack(anchor=W, pady=(0, 10))
-        else:
-            word_label = Label(self.scrollable_frame, text=word, font=("Arial", 24, "bold"))
-            word_label.pack(pady=(0, 10))
-
-        self.wraplength_labels.append((word_label, "sentence"))
-
-        # 检查是否为多单词短语
-        if is_phrase:
-            # 显示短语翻译结果
-            translation = data.get("translation", "")
-            from_lang = data.get("from_language", "")
-            to_lang = data.get("to_language", "")
-            suggestion = data.get("suggestion", "")
-
-            if translation:
-                translation_frame = Frame(self.scrollable_frame)
-                translation_frame.pack(fill=X, pady=10)
-
-                if result_type == "phrase_translation":
-                    Label(translation_frame, text="翻译:", font=("Arial", 12, "bold")).pack(anchor=W)
-                elif result_type == "llm_translation":
-                    Label(translation_frame, text="AI 翻译:", font=("Arial", 12, "bold"), fg="#1565C0").pack(anchor=W)
-                elif result_type == "keyword_detection":
-                    Label(translation_frame, text="提示:", font=("Arial", 12, "bold"), fg="orange").pack(anchor=W)
-
-                trans_label = Label(translation_frame, text=translation,
-                                  font=("Arial", 13), fg="#222",
-                                  wraplength=text_wraplength, justify=LEFT)
-                trans_label.pack(fill=X, anchor=W)
-                self.wraplength_labels.append((trans_label, "sentence"))
-
-                if from_lang and to_lang:
-                    lang_label = Label(translation_frame, text=f"{from_lang} → {to_lang}",
-                                     font=("Arial", 10), fg="#666")
-                    lang_label.pack(anchor=W)
-
-                if suggestion:
-                    suggest_label = Label(translation_frame, text=suggestion,
-                                        font=("Arial", 11), fg="blue",
-                                        wraplength=text_wraplength, justify=LEFT)
-                    suggest_label.pack(anchor=W, pady=(5, 0))
-        else:
-            # 单个单词的显示逻辑
-            symbols = data.get("symbols", {})
-
-            if symbols:
-                word_symbol = symbols.get("word_symbol", "")
-                if word_symbol:
-                    Label(self.scrollable_frame, text=f"[{word_symbol}]", font=("Arial", 14)).pack()
-
-                ph_en = symbols.get("ph_en", "")
-                ph_am = symbols.get("ph_am", "")
-                ph_en_mp3 = symbols.get("ph_en_mp3", "")
-                ph_am_mp3 = symbols.get("ph_am_mp3", "")
-                ph_tts_mp3 = symbols.get("ph_tts_mp3", "")
-
-                if ph_en or ph_am:
-                    pron_frame = Frame(self.scrollable_frame)
-                    pron_frame.pack(pady=5)
-
-                    if ph_en:
-                        en_btn = Button(pron_frame, text=f"EN: {ph_en}", fg="blue", cursor="hand2",
-                                       font=("Arial", 11), command=lambda: play_audio(ph_en_mp3))
-                        en_btn.pack(side=LEFT, padx=5)
-
-                    if ph_am:
-                        am_btn = Button(pron_frame, text=f"AM: {ph_am}", fg="blue", cursor="hand2",
-                                       font=("Arial", 11), command=lambda: play_audio(ph_am_mp3))
-                        am_btn.pack(side=LEFT, padx=5)
-
-                    # 添加TTS播放按钮
-                    if ph_tts_mp3:
-                        tts_btn = Button(pron_frame, text="🔊 TTS", fg="green", cursor="hand2",
-                                        font=("Arial", 11), command=lambda: play_audio(ph_tts_mp3))
-                        tts_btn.pack(side=LEFT, padx=5)
-
-                parts = symbols.get("parts", [])
-                if parts:
-                    meanings_frame = Frame(self.scrollable_frame)
-                    meanings_frame.pack(fill=X, pady=10)
-
-                    Label(meanings_frame, text="Meanings:", font=("Arial", 12, "bold")).pack(anchor=W)
-
-                    for part in parts:
-                        part_name = part.get("part", "")
-                        means = part.get("means", [])
-
-                        if part_name and means:
-                            part_label = Label(meanings_frame, text=f"{part_name}:",
-                                             font=("Arial", 11, "bold"), fg="#333")
-                            part_label.pack(anchor=W, pady=(5, 0))
-
-                            means_text = ", ".join(means[:10])
-                            mean_label = Label(meanings_frame, text=means_text,
-                                             font=("Arial", 10), fg="#555",
-                                             wraplength=text_wraplength, justify=LEFT)
-                            mean_label.pack(anchor=W, padx=(10, 0))
-
-        # 显示例句（如果有）
-        sentences = data.get("sentences", [])
-        if sentences and not is_long_text:
-            sentences_frame = Frame(self.scrollable_frame)
-            sentences_frame.pack(fill=X, pady=10)
-
-            Label(sentences_frame, text="例句:", font=("Arial", 12, "bold")).pack(anchor=W)
-
-            for i, sentence in enumerate(sentences[:5]):
-                en_text = sentence.get("en", "")
-                cn_text = sentence.get("cn", "")
-                tts_url = sentence.get("ttsUrl", "")
-
-                if en_text and cn_text:
-                    sentence_frame = Frame(sentences_frame)
-                    sentence_frame.pack(fill=X, pady=5)
-                    self._bind_wheel_to_frame(sentence_frame)
-
-                    en_frame = Frame(sentence_frame)
-                    en_frame.pack(fill=X, anchor=W)
-                    self._bind_wheel_to_frame(en_frame)
-
-                    if tts_url:
-                        play_btn = Button(en_frame, text="🔊", fg="green", cursor="hand2",
-                                         font=("Arial", 10), width=1, height=1,
-                                         command=lambda url=tts_url: play_audio(url))
-                        play_btn.pack(side=LEFT, padx=(0, 5))
-                        self._bind_wheel_to_widget(play_btn)
-
-                    en_label = Label(en_frame, text=f"{i+1}. {en_text}",
-                                   font=("Arial", 11), fg="#333",
-                                   wraplength=text_wraplength, justify=LEFT)
-                    en_label.pack(side=LEFT, anchor=W)
-                    self.wraplength_labels.append((en_label, "sentence"))
-                    self._bind_wheel_to_widget(en_label)
-
-                    cn_label = Label(sentence_frame, text=f"   {cn_text}",
-                                   font=("Arial", 10), fg="#666",
-                                   wraplength=text_wraplength, justify=LEFT)
-                    cn_label.pack(anchor=W, padx=(20, 0))
-                    self.wraplength_labels.append((cn_label, "sentence"))
-                    self._bind_wheel_to_widget(cn_label)
-
-    def _bind_wheel_to_frame(self, frame):
-        """为框架绑定滚轮事件"""
-        def _on_frame_mousewheel(event):
-            """处理框架内的鼠标滚轮事件"""
-            # 正确的滚轮事件处理逻辑：
-            # 向上滚动 (event.delta > 0): 视图向上移动，使用负数
-            # 向下滚动 (event.delta < 0): 视图向下移动，使用正数
-            delta = -1 * (event.delta // 120)  # 标准化滚轮值
-            # 滚动Canvas
-            self.canvas.yview_scroll(delta, "units")
-
-        # 绑定滚轮事件到框架
-        frame.bind("<MouseWheel>", _on_frame_mousewheel)
-        frame.bind("<Button-4>", _on_frame_mousewheel)  # Linux向上滚动
-        frame.bind("<Button-5>", _on_frame_mousewheel)  # Linux向下滚动
-
-    def _bind_wheel_to_widget(self, widget):
-        """为小部件绑定滚轮事件"""
-        def _on_widget_mousewheel(event):
-            """处理小部件内的鼠标滚轮事件"""
-            # 正确的滚轮事件处理逻辑：
-            # 向上滚动 (event.delta > 0): 视图向上移动，使用负数
-            # 向下滚动 (event.delta < 0): 视图向下移动，使用正数
-            delta = -1 * (event.delta // 120)  # 标准化滚轮值
-            # 滚动Canvas
-            self.canvas.yview_scroll(delta, "units")
-
-        # 绑定滚轮事件到小部件
-        widget.bind("<MouseWheel>", _on_widget_mousewheel)
-        widget.bind("<Button-4>", _on_widget_mousewheel)  # Linux向上滚动
-        widget.bind("<Button-5>", _on_widget_mousewheel)  # Linux向下滚动
+        """渲染词典/LLM 查询结果（委托给 ResultRenderer）"""
+        self.renderer.render(data)
 
     def _force_canvas_resize(self):
         """强制触发Canvas resize事件，确保内容正确填充"""
@@ -978,15 +768,7 @@ class DictionaryApp:
                 self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
                 # 更新文本标签的换行长度
-                if hasattr(self, 'wraplength_labels') and self.wraplength_labels:
-                    new_wraplength = frame_width - 20  # 减去边距
-                    new_sentence_wraplength = new_wraplength - 30  # 例句文本稍小一点
-                    for label, label_type in self.wraplength_labels:
-                        if label.winfo_exists():
-                            if label_type == "sentence":
-                                label.config(wraplength=new_sentence_wraplength)
-                            else:
-                                label.config(wraplength=new_wraplength)
+                self.renderer.update_wraplength(frame_width)
 
     def _on_window_resize(self, event):
         """当窗口大小变化时，记录新的窗口尺寸"""
@@ -1020,18 +802,7 @@ class DictionaryApp:
             self.scrollable_frame.update_idletasks()
 
             # 如果有内容，更新所有文本标签的换行长度
-            if hasattr(self, 'wraplength_labels') and self.wraplength_labels:
-                # 获取新的换行长度
-                new_wraplength = frame_width - 20  # 减去边距
-                new_sentence_wraplength = new_wraplength - 30  # 例句文本稍小一点
-
-                # 更新每个标签的换行长度
-                for label, label_type in self.wraplength_labels:
-                    if label.winfo_exists():
-                        if label_type == "sentence":
-                            label.config(wraplength=new_sentence_wraplength)
-                        else:
-                            label.config(wraplength=new_wraplength)
+            self.renderer.update_wraplength(frame_width)
 
             # 更新滚动区域
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -1041,12 +812,13 @@ class DictionaryApp:
 
     def on_closing(self):
         """窗口关闭时的处理"""
-        if self.capture_mode:
-            stop_service()
+        if self.capture.running:
+            self.capture.stop()
         self.root.destroy()
 
 
 if __name__ == "__main__":
+    setup_logging()
     root = Tk()
     app = DictionaryApp(root)
     root.mainloop()
