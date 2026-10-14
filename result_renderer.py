@@ -4,7 +4,7 @@
 给定的容器 frame；不依赖 DictionaryApp 其它逻辑。窗口级行为
 （canvas 尺寸、状态记录）仍留在 UI 层；换行高度感知收口在本类内部。
 """
-from tkinter import Label, Frame, Button
+from tkinter import Label, Frame, Button, LEFT, RIGHT, W, X
 from ui_constants import COLORS, FONTS, PAD
 from audio_player import play_audio
 

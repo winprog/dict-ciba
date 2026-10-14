@@ -29,7 +29,7 @@ class WordStateManager:
             return text
             
         # 中英文标点符号
-        punctuation_chars = '.,!?;:"\'`，。！？；："\'（）【】《》<>[]{}()'
+        punctuation_chars = '.,!?;:"\'`，。！？；："\'“”‘’（）【】《》<>[]{}()'
         
         # 清理开头的标点符号
         while text and text[0] in punctuation_chars:

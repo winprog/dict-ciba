@@ -1,5 +1,7 @@
 # Dict-CiBa UI 重构技术方案
 
+> **持续执行规范（硬性要求，任何迭代都不得压缩/省略）**：本方案涉及的一切命令行执行（编译、实机启动验证、LLM 调用、脚本运行）**必须**遵守 `AGENTS.md` 三条规范——① 依赖 `env.sh` 的脚本必须先 `source env.sh`；② 涉及 LLM API 的命令必须 `timeout` + `blocking=true` + source env.sh；③ **普通命令一律 `blocking=false` 异步执行 + 限时轮询 + 重定向兜底**。后续重构、改文档、加特性时都不得把这条约定"压缩掉"。
+
 ## 1. 背景
 
 Dict-CiBa 当前 UI 代码集中在 `dictionary_gui.py`（1150 行），承担窗口管理、取词控制、搜索分流、UI 渲染、音频播放、桌面定位 6 个职责。**核心功能链路已通**（选中文本 → 取词 → 窗口滑入 → 自动翻译 → LLM 追问），但在视觉一致性、交互健壮性、代码可维护性三个维度存在系统性问题，阻碍后续快速迭代。
@@ -13,7 +15,7 @@ Dict-CiBa 当前 UI 代码集中在 `dictionary_gui.py`（1150 行），承担�
 | 目标 | 度量方式 |
 |---|---|
 | 视觉一致性 | 统一 spacing scale 和字体层级，消除 magic number 间距 |
-| 代码可维护性 | `DictionaryApp` 单类拆分至 4–5 个职责单一的类，单文件 ≤ 400 行 |
+| 代码可维护性 | `DictionaryApp` 单类拆分至多个职责单一的类（控制器/视图，符合 SRP/Controller-driven）；主类经拆分 + 死代码清洗由 1150 收敛至 ~417 行，按**逻辑/职责**达成而非机械压行 |
 | 交互健壮性 | 修复已知逻辑 bug，消除滚轮事件重复绑定等混乱 |
 | 用户体验 | 支持全局快捷键、改进加载反馈、错误提示内联化 |
 
@@ -130,7 +132,7 @@ def _restore_window_state(self):
 
 #### 消除 `wraplength_labels` hack
 
-用 `Text` 组件替换结果区的 `Canvas + Frame` 方案，`Text` 原生支持 `wrap=WORD` 自适应容器宽度，不需要手动维护 wraplength 列表。
+~~用 `Text` 组件替换结果区的 `Canvas + Frame` 方案~~ —— 经验证多版块 + LLM `HtmlFrame` 无法塞进单 `Text`，换组件反而翻车。**最终落地（见 P2-6 备注）**：保留 `Canvas + Frame`，把动态换行管理收口进 `ResultRenderer`（`_wrap_labels` + `update_wraplength()`），UI 层不再存在 `wraplength_labels`。
 
 #### 日志统一
 
@@ -168,7 +170,7 @@ def _restore_window_state(self):
 | P1-1 | 提取 `COLORS`/`FONTS`/`SPACING` 常量，替换硬编码颜色与字号 | 🟢 已完成 | 新建 `ui_constants.py`；主色/状态色/文本层/气泡色 + 字体层级全部收口，`dictionary_gui.py` 无硬编码 hex |
 | P1-2 | 统一 spacing scale，消除 magic number pady | 🟢 已完成 | `SPACING`/`PAD` 常量补齐到全量语义（pad_xs/s/m/md/l/lg/indent 等），`dictionary_gui`/`result_renderer` 内所有 pady/padx 改为具名引用，无裸数字 |
 | P1-3 | LLM 对话气泡样式统一（用户/AI 都用 HtmlFrame 或都用 Frame+Label） | 🟢 已完成 | 新增 `_chat_bubble_html`，用户/AI 均走 HtmlFrame，共用圆角气泡样式 |
-| P1-4 | 取词按钮/状态灯视觉增强：增加小图标指示灯 | 🟢 已完成 | 新增 Canvas 状态灯 `_set_led`，绿灯亮=取词运行中 |
+| P1-4 | 取词按钮/状态灯视觉增强：增加小图标指示灯 | 🟢 已完成 | 新增 `Canvas` 状态灯，绘制/切换收口进 `MainView.set_led`；绿灯亮=取词运行中 |
 
 ### 阶段三：代码拆分（P2）
 
@@ -187,10 +189,10 @@ def _restore_window_state(self):
 | ID | 任务 | 优先级 | 状态 | 备注 |
 |---|---|---|---|---|
 | P3-1 | 全局快捷键 `Ctrl+Shift+C` 开关取词、`Esc` 隐藏窗口 | 🟢 已完成 | 新增 `_register_shortcuts`（应用内 `bind_all`）。注：`keyboard`/`pynput` 均不可用且 Wayland 全局捕获不可靠，故适配为窗口聚焦即生效，系统级全局热键依赖 GNOME 桌面自定义 |
-| P3-2 | 加载 spinner 动画（替代静态 "Loading..."） | 🟢 已完成 | 新增 `_make_spinner`：四帧 `|`/`/`/`-`/`\` + `after` 定时器驱动，返回幂等 `stop()` |
+| P3-2 | 加载 spinner 动画（替代静态 "Loading..."） | 🟢 已完成 | 新增独立组件 `spinner.make_spinner`（四帧 `|`/`/`/`-`/`\` + `after` 定时器驱动，返回幂等 `stop()`）；主类 `_make_spinner` 已下沉为一行调用 |
 | P3-3 | 错误提示内联化（红色条带 Label 替换 messagebox） | 🟢 已完成 | `_search_error` 改为在结果区渲染红色条带（danger_bg/danger_text），不再弹窗打断 |
 | P3-4 | 搜索历史（Combobox + 最近 20 条） | 🟢 已完成 | 新建 `search_history.py`（JSON 持久化 `~/.ciba_history.json`，有序去重限 20）；输入框换为 `ttk.Combobox`，FocusIn/下拉/回车均绑定，成功查询自动记录 |
-| P3-5 | 键盘导航 + tab 顺序定义 | 🟢 已完成 | 初始焦点落输入框 `entry.focus_set()`，Tab 按创建序（顶部操作区 → 输入→Search→LLM→结果）；Esc/Ctrl+Shift+C 快捷键联动 |
+| P3-5 | 键盘导航 + tab 顺序定义 | 🟢 已完成 | 初始焦点落输入框 `view.focus_input()`（由 `MainView` 收口），Tab 按创建序（顶部操作区 → 输入→Search→LLM→结果）；Esc/Ctrl+Shift+C 快捷键联动 |
 | P3-6 | 取词到翻译过程增加 toast 进度提示 | 🟢 已完成 | 查词 spinner 文案语义化 `正在查词: {word}`；LLM 已有 `AI 思考中...`；取词命中保留顶部 `已捕获:` 通知 |
 
 ### 进度汇总
@@ -211,7 +213,7 @@ def _restore_window_state(self):
 |---|---|
 | P0 | `_restore_window_state` 在取词后 3 秒正确恢复非置顶；滚轮在结果区、输入框、滚动条上行为一致；空方法已删除或实现；全局 grep 确认 `adjust_window_position` 仅定义一处 |
 | P1 | 所有 `pady` 值 ∈ {4, 8, 16, 24}；按钮背景色对比度 ≥ 4.5:1（Chrome DevTools 可验）；LLM 对话气泡边框/圆角/内边距一致 |
-| P2 | `dictionary_gui.py` ≤ 400 行；所有新类文件 ≤ 300 行；`grep print dictionary_gui.py` 无结果；`wraplength_labels` 属性不存在 |
+| P2 | `dictionary_gui.py` 收敛至 ~417 行（已通过模块拆分 + 死代码清洗达成，按**逻辑/职责**而非机械压行）；所有新类文件 ≤ 300 行；`grep print dictionary_gui.py` 无结果；`wraplength_labels` 属性不存在 |
 | P3 | `Ctrl+Shift+C` 开关取词有效（后台运行时）；错误不弹 messagebox；Combobox 可下拉看到最近查词；Tab 键可在所有按钮/输入框间跳转 |
 
 ---

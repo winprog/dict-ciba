@@ -34,8 +34,13 @@ class SearchController:
 
         回调在后台线程触发，调用方需自行转到主线程更新 UI。
         """
-        is_multi_word = len(word.split()) >= 2
+        # 长文本优先：>80 字符（无论是否含空格）一律走 LLM
         is_long_text = len(word) > 80
+        if is_long_text:
+            on_llm(word)
+            return
+
+        is_multi_word = len(word.split()) >= 2
 
         if not is_multi_word:
             def _query_word():
