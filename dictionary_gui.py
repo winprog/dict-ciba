@@ -23,10 +23,10 @@ from result_renderer import ResultRenderer
 from llm_client import chat_messages as llm_chat_messages
 import markdown
 from tkinterweb import HtmlFrame
-from desktop_placement import (
-    WindowPlacementService,
-    sticky_client_message_data,
-)
+from desktop_placement import WindowPlacementService
+from window_manager import WindowManager
+from llm_chat_view import LLMChatView
+from scroll_area import ScrollArea
 from ui_constants import COLORS, FONTS, SPACING, PAD
 
 
@@ -74,12 +74,13 @@ class DictionaryApp:
 
         # 桌面定位服务（Facade）：解析桌面布局并计算窗口几何
         self._placement_service = WindowPlacementService()
+        self.window_mgr = WindowManager(self.root, self._placement_service)
 
         # 单词状态管理器
         self.word_state_manager = WordStateManager()
 
         # LLM 多轮对话控制器
-        self._llm_input = None  # 追问输入框
+        self._llm_input = None  # 追问输入框（由 LLMChatView 维护，保留字段兼容）
         self.conv = LLMConversation(
             system_prompt=(
                 "你是一个中英文语言理解助手，能解释单词、短语、句子和段落，"
@@ -173,66 +174,17 @@ class DictionaryApp:
         self.result_frame = Frame(root, padx=PAD["result_h"], pady=PAD["result_v"])
         self.result_frame.pack(fill=BOTH, expand=True)
 
-        self.canvas = Canvas(self.result_frame)
-        self.scrollbar = Scrollbar(self.result_frame, orient=VERTICAL, command=self.canvas.yview)
-        self.scrollable_frame = Frame(self.canvas)
-
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # 可滚动结果区（收口 canvas/scrollbar/滚轮/布局刷新）
+        self.scroll_area = ScrollArea(
+            self.result_frame,
+            on_resize=lambda w: self.renderer.update_wraplength(w),
         )
-
-        self.canvas_window_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-
-        # 绑定画布大小变化事件
-        self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.scrollable_frame = self.scroll_area.frame  # 兼容引用
+        self.canvas_window_id = None  # 兼容旧判断，无需再置
+        self.scroll_area.bind_mousewheel(self.root)
 
         # 绑定窗口大小变化事件，记录窗口尺寸
         self.root.bind("<Configure>", self._on_window_resize)
-
-        # 绑定鼠标滚轮事件到整个窗口，确保一致的滚动行为
-        def _on_mousewheel(event):
-            """处理鼠标滚轮事件"""
-            # 正确的滚轮事件处理逻辑：
-            # 向上滚动 (event.delta > 0): 视图向上移动，使用负数
-            # 向下滚动 (event.delta < 0): 视图向下移动，使用正数
-            delta = -1 * (event.delta // 120)  # 标准化滚轮值
-            # 滚动Canvas
-            self.canvas.yview_scroll(delta, "units")
-
-            # 调试信息
-            logger.debug(f"🔍 滚轮事件: delta={event.delta}, 滚动量={delta}")
-
-            # 返回"break"阻止事件进一步传播
-            return "break"
-
-        def _on_linux_mousewheel(event):
-            """处理Linux鼠标滚轮事件"""
-            # Linux系统使用Button-4和Button-5事件
-            if event.num == 4:
-                # 向上滚动
-                self.canvas.yview_scroll(-1, "units")
-                logger.debug("🔍 Linux滚轮事件: 向上滚动")
-            elif event.num == 5:
-                # 向下滚动
-                self.canvas.yview_scroll(1, "units")
-                logger.debug("🔍 Linux滚轮事件: 向下滚动")
-
-            # 返回"break"阻止事件进一步传播
-            return "break"
-
-        # 使用bind_all绑定到整个应用程序，确保所有组件都能接收滚轮事件。
-        # 只在全局绑定一次，避免与组件级绑定叠加导致同一滚轮事件被滚动多次。
-        self.root.bind_all("<MouseWheel>", _on_mousewheel)
-        self.root.bind_all("<Button-4>", _on_linux_mousewheel)  # Linux向上滚动
-        self.root.bind_all("<Button-5>", _on_linux_mousewheel)  # Linux向下滚动
-
-        # 为Canvas启用焦点，确保能接收滚轮事件
-        self.canvas.focus_set()
-
-        self.canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        self.scrollbar.pack(side=RIGHT, fill=Y)
 
         self.current_data = None
 
@@ -240,6 +192,13 @@ class DictionaryApp:
         self.renderer = ResultRenderer(
             self.scrollable_frame,
             get_frame_width=lambda: self.current_window_width,
+        )
+
+        # LLM 对话视图（纯渲染；业务由 self.conv + _ask_llm 承担）
+        self.llm_view = LLMChatView(
+            self.scrollable_frame,
+            on_resize=lambda: self.scroll_area.force_layout(),
+            on_submit=self._ask_llm,
         )
 
         # 取词模式控制（服务生命周期与状态）
@@ -347,122 +306,16 @@ class DictionaryApp:
         self.root.bind_all("<Control-Shift-c>", lambda e: self.toggle_capture_mode())
 
     def show_window(self):
-        """显示窗口"""
-        window_width = self.current_window_width
-        window_height = self.current_window_height
-
-        logger.debug(f"📐 [show_window] 初始: screen={self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}, window={window_width}x{window_height}")
-        logger.debug(f"📐 [show_window] last_mouse_position={self.last_mouse_position}")
-
-        # Facade：解析桌面布局 -> 判桌面 -> 算窗口几何。
-        # 远离取词点放置：窗口落到对角远端象限，避免遮挡鼠标周围的文档。
-        placement = self._placement_service.avoid_current_placement(
+        """显示窗口（几何放置/DeskTop 切换委托给 WindowManager）"""
+        self.window_mgr.place_window(
             self.last_mouse_position,
-            window_width,
-            window_height,
-            (self.root.winfo_screenwidth(), self.root.winfo_screenheight()),
+            self.current_window_width,
+            self.current_window_height,
         )
-        x, y = placement.x, placement.y
-        target_desktop = placement.desktop
-
-        logger.debug(f"📐 [show_window] 最终 geometry: {window_width}x{window_height}+{x}+{y}, target_desktop={target_desktop}")
-
-        self.root.deiconify()
-        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.window_visible = True
         self.hide_btn.config(
             text="隐藏窗口", bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"]
         )
-        self.root.update_idletasks()
-
-        if target_desktop is not None:
-            logger.debug(f"📐 [show_window] 安排 100ms 后调用 _ensure_window_sticky()")
-            self.root.after(100, self._ensure_window_sticky)
-        else:
-            logger.debug(f"📐 [show_window] target_desktop 为 None, 不移动桌面")
-
-    def _find_x11_window_id(self):
-        """用 xdotool 找到 Dictionary 窗口的 X11 Window ID（十进制）
-
-        GNOME 50.1 在 Wayland 下，wmctrl -l 会段错误，
-        所以用 xdotool search 来查找窗口。
-        """
-        try:
-            r = subprocess.run(
-                ['xdotool', 'search', '--onlyvisible', '--name', 'Dictionary'],
-                capture_output=True, text=True, timeout=3
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip().split('\n')[0]
-
-            r = subprocess.run(
-                ['xdotool', 'search', '--name', 'Dictionary'],
-                capture_output=True, text=True, timeout=3
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip().split('\n')[0]
-        except Exception:
-            pass
-        return None
-
-    def _ensure_window_sticky(self):
-        """让窗口驻留所有虚拟桌面（Sticky）。
-
-        关键：GNOME 50.1 + Wayland 下，Mutter 不响应 xprop 改写 _NET_WM_DESKTOP
-        属性，只响应 _NET_WM_DESKTOP 的 ClientMessage 通知（source=1）。
-        因此通过 python-xlib 向 root 发送该 ClientMessage，让窗口在任意
-        虚拟桌面上都可见（翻译工具：取词窗口随取词出现）。
-        """
-        try:
-            logger.debug(f"🖥️  [_ensure_window_sticky] 开始（ClientMessage 通知）")
-
-            win_id = self._find_x11_window_id()
-            logger.debug(f"🖥️  [_ensure_window_sticky] 找到 X11 Window ID: {win_id}")
-
-            if win_id is None:
-                logger.debug(f"🖥️  [_ensure_window_sticky] 窗口还没就绪, 200ms 后重试")
-                self.root.after(200, self._ensure_window_sticky)
-                return
-
-            from Xlib import display as xdisplay, X
-            from Xlib.protocol import event as xevent
-
-            d = xdisplay.Display()
-            root = d.screen().root
-            w = d.create_resource_object('window', int(win_id))
-            atom = d.intern_atom('_NET_WM_DESKTOP')
-            msg = xevent.ClientMessage(
-                window=w,
-                client_type=atom,
-                data=(32, sticky_client_message_data()),
-            )
-            root.send_event(
-                msg,
-                event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
-            )
-            d.flush()
-            logger.debug(f"🖥️  [_ensure_window_sticky] 已发送 sticky ClientMessage")
-
-            r = subprocess.run(
-                ['xdotool', 'windowactivate', win_id],
-                capture_output=True, text=True, timeout=3
-            )
-            logger.debug(f"🖥️  [_ensure_window_sticky] windowactivate: rc={r.returncode}, stderr={r.stderr.strip()}")
-
-            verify = subprocess.run(
-                ['xprop', '-id', win_id, '_NET_WM_STATE'],
-                capture_output=True, text=True, timeout=3
-            )
-            logger.debug(f"🖥️  [_ensure_window_sticky] 验证: {verify.stdout.strip()}")
-
-            self.root.deiconify()
-            self.root.lift()
-            self.root.focus_force()
-            logger.debug(f"🖥️  [_ensure_window_sticky] 完成")
-        except Exception as e:
-            logger.warning(f"🖥️  [_ensure_window_sticky] 异常: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
 
     def on_focus_in(self, event=None):
         """窗口获得焦点时的处理"""
@@ -630,8 +483,8 @@ class DictionaryApp:
         self.current_data = data
         self.display_result(data)
 
-        # 强制触发Canvas resize事件，确保首次显示时正确填充
-        self.root.after(50, self._force_canvas_resize)
+        # 强制触发布局刷新，确保首次显示时正确填充
+        self.root.after(50, self.scroll_area.force_layout)
 
     def _search_error(self, error):
         """P3-3：搜索错误内联为红色条带，不再弹 messagebox。"""
@@ -643,7 +496,7 @@ class DictionaryApp:
         Label(bar, text=f"⚠️ 查询失败：{error}", font=FONTS["label"],
               fg=COLORS["danger_text"], bg=COLORS["danger_bg"]).pack(anchor=W, padx=PAD["pad_md"], pady=PAD["pad_s"])
 
-        self.root.after(50, self._force_canvas_resize)
+        self.root.after(50, self.scroll_area.force_layout)
 
     def _switch_to_llm_chat(self, word):
         """从搜索流程切换到 LLM 多轮对话视图"""
@@ -660,115 +513,31 @@ class DictionaryApp:
         """以 word 为初始问题开启 LLM 对话"""
         self.current_data = {"result_type": "llm_translation", "word": word}
         self.conv.start(word)
-        self._render_llm_chat(loading=True)
+        self.llm_view.render(self.conv.history, loading=True)
 
     def _ask_llm(self):
         """提交追问"""
-        if not self._llm_input:
+        if not self.llm_view.llm_input:
             return
-        question = self._llm_input.get().strip()
+        question = self.llm_view.llm_input.get().strip()
         if not self.conv.ask(question):
             return  # 输入为空或上一轮仍在加载
-        self._render_llm_chat(loading=True)
+        self.llm_view.render(self.conv.history, loading=True)
 
     def _llm_commit(self, ans):
         """主线程接收 LLM 回答：写入历史并渲染"""
         self.conv.append_assistant(ans)
         if isinstance(self.current_data, dict):
             self.current_data["translation"] = ans
-        self._render_llm_chat(loading=False)
+        self.llm_view.render(self.conv.history, loading=False)
 
     def _llm_error(self, error):
         self.conv.append_assistant(f"⚠️ {error}")
-        self._render_llm_chat(loading=False)
-
-    def _chat_bubble_html(self, content: str, user: bool):
-        """把对话内容包成统一气泡样式的 HTML（用户/AI 共用一种气泡框架）"""
-        esc = html.escape(content).replace("\n", "<br>")
-        if user:
-            style = (f"background:{COLORS['bubble_user']}; color:{COLORS['bubble_user_text']};"
-                     "padding:8px 12px; border-radius:6px; text-align:left;")
-        else:
-            style = (f"background:{COLORS['bubble_ai']}; color:{COLORS['bubble_ai_text']};"
-                     "padding:8px 12px; border-radius:6px;")
-        return f'<div style="{style}">{esc}</div>'
-
-    def _render_llm_chat(self, loading):
-        """渲染 LLM 对话历史与底部追问输入行"""
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-
-        Label(self.scrollable_frame, text="AI 多轮对话（可继续追问）",
-              font=FONTS["label_bold"], fg=COLORS["primary"]).pack(anchor=W, pady=(0, PAD["pad_l"]))
-
-        latest = self.conv.latest_role()
-
-        for msg in self.conv.history:
-            role = msg["role"]
-            content = msg["content"]
-            if role == "user":
-                bubble = self._chat_bubble_html(content, user=True)
-                viewer = HtmlFrame(self.scrollable_frame, scrollbar=False,
-                                   messages_are_links=True, contextmenu=False,
-                                   highlight_words=False)
-                viewer.load_html(bubble)
-                viewer.pack(fill=X, anchor=E, pady=PAD["pad_xs"])
-            else:
-                md = markdown.markdown(content)
-                html = self._chat_bubble_html(md, user=False)
-                viewer = HtmlFrame(self.scrollable_frame, scrollbar=False,
-                                   messages_are_links=True, contextmenu=False,
-                                   highlight_words=False)
-                viewer.load_html(html)
-                viewer.pack(fill=X, anchor=W, pady=PAD["pad_xs"])
-
-        if loading and latest == "user":
-            Label(self.scrollable_frame, text="AI 思考中...",
-                  font=FONTS["italic"], fg=COLORS["text_disabled"]).pack(anchor=W, pady=PAD["pad_xs"])
-
-        self._render_llm_followup_input()
-        self.root.update_idletasks()
-        self.root.after(50, self._force_canvas_resize)
-
-    def _render_llm_followup_input(self):
-        """渲染底部追问输入行"""
-        row = Frame(self.scrollable_frame)
-        row.pack(fill=X, pady=(PAD["pad_lg"], 0))
-
-        self._llm_input = Entry(row, font=FONTS["input"])
-        self._llm_input.pack(side=LEFT, fill=X, expand=True, padx=(0, PAD["pad_m"]))
-        self._llm_input.bind("<Return>", lambda e: self._ask_llm())
-
-        ask_btn = Button(row, text="追问", command=self._ask_llm,
-                         bg=COLORS["primary"], fg=COLORS["primary_text_on"],
-                         font=FONTS["small"], relief=FLAT, cursor="hand2")
-        ask_btn.pack(side=RIGHT)
-
-        self._llm_input.focus_set()
+        self.llm_view.render(self.conv.history, loading=False)
 
     def display_result(self, data):
         """渲染词典/LLM 查询结果（委托给 ResultRenderer）"""
         self.renderer.render(data)
-
-    def _force_canvas_resize(self):
-        """强制触发Canvas resize事件，确保内容正确填充"""
-        if hasattr(self, 'canvas') and hasattr(self, 'canvas_window_id') and self.canvas_window_id:
-            # 获取Canvas的实际宽度
-            canvas_width = self.canvas.winfo_width()
-            if canvas_width > 0:
-                # 计算框架宽度（减去滚动条宽度）
-                scrollbar_width = 20
-                frame_width = max(400, canvas_width - scrollbar_width)
-
-                # 更新Canvas窗口项宽度
-                self.canvas.itemconfigure(self.canvas_window_id, width=frame_width)
-                self.scrollable_frame.config(width=frame_width)
-
-                # 更新滚动区域
-                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-                # 更新文本标签的换行长度
-                self.renderer.update_wraplength(frame_width)
 
     def _on_window_resize(self, event):
         """当窗口大小变化时，记录新的窗口尺寸"""
@@ -780,35 +549,6 @@ class DictionaryApp:
                 # 只有当尺寸大于最小阈值时才更新
                 self.current_window_width = event.width
                 self.current_window_height = event.height
-
-    def _on_canvas_resize(self, event):
-        """当画布大小变化时，更新可滚动框架和内容"""
-        if hasattr(self, 'canvas_window_id') and self.canvas_window_id:
-            # 获取画布新宽度和高度
-            new_width = event.width
-            new_height = event.height
-
-            # 计算实际可用宽度（减去滚动条宽度）
-            scrollbar_width = 20
-            frame_width = new_width - scrollbar_width
-
-            # 设置可滚动框架的宽度以匹配画布宽度
-            self.scrollable_frame.config(width=frame_width)
-
-            # 更新canvas窗口尺寸，使其填充整个画布宽度
-            self.canvas.itemconfigure(self.canvas_window_id, width=frame_width)
-
-            # 强制更新布局
-            self.scrollable_frame.update_idletasks()
-
-            # 如果有内容，更新所有文本标签的换行长度
-            self.renderer.update_wraplength(frame_width)
-
-            # 更新滚动区域
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-            # 强制重绘
-            self.canvas.update_idletasks()
 
     def on_closing(self):
         """窗口关闭时的处理"""
