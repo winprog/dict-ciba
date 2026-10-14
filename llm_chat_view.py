@@ -4,15 +4,25 @@
 "AI 思考中..."加载态，以及底部追问输入行。业务状态（历史记录、
 异步调度）由 DictionaryApp + LLMConversation 持有，本类只做纯视图。
 
-构造需传入滚动容器 frame、布局完成后触发的回调 on_resize，以及
-用户点击 "追问"/回车时的提交回调 on_submit（App 授权的权威逻辑）。
+气泡用原生 Label + wraplength 渲染：折行正确、高度贴合内容（无大片
+空白）、行高由字体精确控制；在容器 resize 时统一刷新折行宽度。
 """
 
 from tkinter import *
-import html
-import markdown
-from tkinterweb import HtmlFrame
+import re
 from ui_constants import COLORS, FONTS, PAD
+
+
+def _markdown_to_plain(text: str) -> str:
+    """把 LLM 返回的轻量 markdown 降为纯文本（保留段落与列表结构）。"""
+    # 去掉加粗/斜体的星号标记
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.+?)\*", r"\1", text)
+    # 去掉标题井号
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.M)
+    # 无序列表符号统一
+    text = re.sub(r"^[ \t]*[-*+]\s+", "• ", text, flags=re.M)
+    return text
 
 
 class LLMChatView:
@@ -23,10 +33,23 @@ class LLMChatView:
         self._on_resize = on_resize
         self._on_submit = on_submit
         self._llm_input = None
+        self._bubbles = []
+
+        # 滚动容器宽度变化时刷新所有气泡折行宽度
+        frame.bind("<Configure>", self._on_container_resize)
 
     @property
     def llm_input(self):
         return self._llm_input
+
+    def _wrap_width(self):
+        w = self._frame.winfo_width()
+        return max(120, (398 if w <= 1 else w) - 24)
+
+    def _on_container_resize(self, _event=None):
+        wrap = self._wrap_width()
+        for label in self._bubbles:
+            label.config(wraplength=wrap)
 
     def render(self, history, loading):
         """整体重绘对话区。
@@ -37,22 +60,28 @@ class LLMChatView:
 
         for widget in self._frame.winfo_children():
             widget.destroy()
+        self._bubbles = []
 
         Label(self._frame, text="AI 多轮对话（可继续追问）",
               font=FONTS["label_bold"], fg=COLORS["primary"]).pack(anchor=W, pady=(0, PAD["pad_l"]))
 
+        wrap = self._wrap_width()
         for msg in history:
             role = msg["role"]
-            content = msg["content"]
-            bubble = self._chat_bubble_html(
-                markdown.markdown(content) if role != "user" else content,
-                user=(role == "user"),
+            bubble = Label(
+                self._frame,
+                text=(msg["content"] if role == "user"
+                      else _markdown_to_plain(msg["content"])),
+                font=FONTS["body"],
+                fg=(COLORS["bubble_user_text"] if role == "user" else COLORS["bubble_ai_text"]),
+                bg=(COLORS["bubble_user"] if role == "user" else COLORS["bubble_ai"]),
+                wraplength=wrap,
+                justify=(LEFT if role == "user" else LEFT),
+                anchor=(E if role == "user" else W),
+                padx=12, pady=8,
             )
-            viewer = HtmlFrame(self._frame, scrollbar=False,
-                               messages_are_links=True, contextmenu=False,
-                               highlight_words=False)
-            viewer.load_html(bubble)
-            viewer.pack(fill=X, anchor=E if role == "user" else W, pady=PAD["pad_xs"])
+            bubble.pack(fill=X, anchor=E if role == "user" else W, pady=PAD["pad_xs"])
+            self._bubbles.append(bubble)
 
         if loading and latest == "user":
             Label(self._frame, text="AI 思考中...",
@@ -61,17 +90,6 @@ class LLMChatView:
         self._render_followup_input()
         self._frame.update_idletasks()
         self._on_resize()
-
-    def _chat_bubble_html(self, content: str, user: bool):
-        """把对话内容包成统一气泡样式的 HTML。"""
-        esc = html.escape(content).replace("\n", "<br>")
-        if user:
-            style = (f"background:{COLORS['bubble_user']}; color:{COLORS['bubble_user_text']};"
-                     "padding:8px 12px; border-radius:6px; text-align:left;")
-        else:
-            style = (f"background:{COLORS['bubble_ai']}; color:{COLORS['bubble_ai_text']};"
-                     "padding:8px 12px; border-radius:6px;")
-        return f'<div style="{style}">{esc}</div>'
 
     def _render_followup_input(self):
         """渲染底部追问输入行（回车或点击"追问"提交）。"""

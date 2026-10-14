@@ -70,11 +70,16 @@ class ScrollArea(Frame):
 
         self.frame.config(width=frame_width)
         self.canvas.itemconfigure(self._window_id, width=frame_width)
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # 先让内容完成当前宽度下的布局
         self.frame.update_idletasks()
 
         if self._on_resize:
             self._on_resize(frame_width)
+
+        # 回调可能改变子控件折行/高度，需再布局后再采集边界，
+        # 否则 scrollregion 偏小，滚到底出现白块、滚不到底部内容（如追问输入框）。
+        self.frame.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_mousewheel(self, event):
         """标准滚轮（Windows/mac）：delta>0 上滚。"""
