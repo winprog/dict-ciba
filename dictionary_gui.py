@@ -1,13 +1,12 @@
 import json
 import re
-import html
 import subprocess
 import sys
 import os
 import time
 from typing import Optional, Dict, Any
 from tkinter import *
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 from logger import get_logger, setup as setup_logging
 
 logger = get_logger(__name__)
@@ -18,16 +17,15 @@ from capture_controller import CaptureController
 from search_controller import SearchController
 from word_state_manager import WordStateManager
 from llm_conversation import LLMConversation
-from search_history import SearchHistory
 from result_renderer import ResultRenderer
 from llm_client import chat_messages as llm_chat_messages
-import markdown
-from tkinterweb import HtmlFrame
 from desktop_placement import WindowPlacementService
 from window_manager import WindowManager
 from llm_chat_view import LLMChatView
 from scroll_area import ScrollArea
-from ui_constants import COLORS, FONTS, SPACING, PAD
+from ui_builder import MainView
+from ui_constants import COLORS, FONTS, PAD
+from spinner import make_spinner
 
 
 class DictionaryApp:
@@ -80,7 +78,6 @@ class DictionaryApp:
         self.word_state_manager = WordStateManager()
 
         # LLM 多轮对话控制器
-        self._llm_input = None  # 追问输入框（由 LLMChatView 维护，保留字段兼容）
         self.conv = LLMConversation(
             system_prompt=(
                 "你是一个中英文语言理解助手，能解释单词、短语、句子和段落，"
@@ -102,75 +99,21 @@ class DictionaryApp:
         # 绑定窗口焦点事件
         self.root.bind('<FocusIn>', self.on_focus_in)
 
-        # 顶部按钮区域
-        self.top_frame = Frame(root, pady=PAD["pad_s"])
-        self.top_frame.pack(fill=X)
+        # 顶栏/输入面板装配（MainView 收口控件创建与状态刷新）
+        self.view = MainView(self.root)
+        self.view.bind_actions({
+            "toggle_capture": self.toggle_capture_mode,
+            "toggle_hover": self.toggle_hover_capture,
+            "toggle_topmost": self.toggle_window_topmost,
+            "hide": self.hide_window,
+            "search": self.search,
+            "search_llm": self.search_llm,
+        })
+        # 只保留业务频繁读写/高频访问的引用；按钮状态一律经 self.view 行为方法
+        self.history = self.view.history
+        self.entry = self.view.entry
 
-        # 取词模式状态灯（绿点亮 = 取词运行中）
-        self.capture_led = Canvas(self.top_frame, width=12, height=12,
-                                  highlightthickness=0, bg=self.root.cget("bg"))
-        self._led_item = self.capture_led.create_oval(
-            2, 2, 10, 10, fill=COLORS["text_disabled"], outline=""
-        )
-        self.capture_led.pack(side=LEFT, padx=(PAD["pad_md"], PAD["pad_xs"]))
-
-        # 取词模式按钮
-        self.capture_btn = Button(self.top_frame, text="启动取词模式",
-                                 command=self.toggle_capture_mode,
-                                 bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
-                                 font=FONTS["caption"])
-        self.capture_btn.pack(side=LEFT, padx=PAD["pad_md"])
-
-        # 状态标签
-        self.status_label = Label(self.top_frame, text="取词模式: 关闭",
-                                 font=FONTS["caption"], fg=COLORS["text_secondary"])
-        self.status_label.pack(side=LEFT, padx=PAD["pad_md"])
-
-        # 鼠标悬停取词选项
-        self.enable_hover_var = BooleanVar(value=False)  # 默认禁用鼠标悬停
-        self.hover_check = Checkbutton(self.top_frame, text="启用鼠标悬停取词",
-                                       variable=self.enable_hover_var,
-                                       font=FONTS["caption"],
-                                       command=self.toggle_hover_capture)
-        self.hover_check.pack(side=LEFT, padx=PAD["pad_md"])
-
-        # 窗口控制按钮
-        self.window_btn = Button(self.top_frame, text="置顶显示",
-                                command=self.toggle_window_topmost,
-                                bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
-                                font=FONTS["caption"])
-        self.window_btn.pack(side=RIGHT, padx=PAD["pad_s"])
-
-        self.hide_btn = Button(self.top_frame, text="隐藏窗口",
-                               command=self.hide_window,
-                               bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
-                               font=FONTS["caption"])
-        self.hide_btn.pack(side=RIGHT, padx=PAD["pad_s"])
-
-        # 输入区域
-        self.input_frame = Frame(root, pady=PAD["pad_md"])
-        self.input_frame.pack(fill=X)
-
-        # P3-4 搜索历史（Combobox + 最近 20 条，JSON 持久化）
-        self.history = SearchHistory()
-        self.entry = ttk.Combobox(self.input_frame, font=FONTS["input"],
-                                  values=self.history.list())
-        self.entry.pack(side=LEFT, fill=X, expand=True, padx=(PAD["pad_md"], PAD["pad_s"]))
-        self.entry.bind("<Return>", lambda e: self.search())
-        self.entry.bind("<<ComboboxSelected>>", lambda e: self.search())
-        self.entry.bind("<FocusIn>", lambda e: self.entry.configure(values=self.history.list()))
-
-        self.btn = Button(self.input_frame, text="Search", command=self.search,
-                          bg=COLORS["primary"], fg=COLORS["primary_text_on"],
-                          font=FONTS["small"], relief=FLAT)
-        self.btn.pack(side=RIGHT, padx=(PAD["pad_s"], 0))
-
-        self.llm_btn = Button(self.input_frame, text="LLM", command=self.search_llm,
-                              bg=COLORS["primary"], fg=COLORS["primary_text_on"],
-                              font=FONTS["small"], relief=FLAT)
-        self.llm_btn.pack(side=RIGHT, padx=(0, PAD["pad_md"]))
-
-        # 结果区域
+        # 结果区域（滚动容器；业务渲染依赖 renderer 的回调链，保留在本类组装）
         self.result_frame = Frame(root, padx=PAD["result_h"], pady=PAD["result_v"])
         self.result_frame.pack(fill=BOTH, expand=True)
 
@@ -180,7 +123,6 @@ class DictionaryApp:
             on_resize=lambda w: self.renderer.update_wraplength(w),
         )
         self.scrollable_frame = self.scroll_area.frame  # 兼容引用
-        self.canvas_window_id = None  # 兼容旧判断，无需再置
         self.scroll_area.bind_mousewheel(self.root)
 
         # 绑定窗口大小变化事件，记录窗口尺寸
@@ -202,7 +144,6 @@ class DictionaryApp:
         )
 
         # 取词模式控制（服务生命周期与状态）
-        self.capture_mode = False  # 兼容旧字段，由 controller 同步
         self.capture = CaptureController(
             on_captured_word=self.handle_captured_word
         )
@@ -215,11 +156,11 @@ class DictionaryApp:
         # P3-1 应用内快捷键（窗口聚焦即生效；系统级全局热键依赖 Wayland 桌面注册）
         self._register_shortcuts()
         # P3-5 初始焦点落到输入框
-        self.entry.focus_set()
+        self.view.focus_input()
 
     def toggle_hover_capture(self):
         """切换鼠标悬停取词设置"""
-        self.capture.hover_enabled = self.enable_hover_var.get()
+        self.capture.hover_enabled = self.view.enable_hover_var.get()
         if self.capture.running:
             # 取词模式正在运行，重启服务以应用新设置
             self.capture.apply_hover()
@@ -227,7 +168,7 @@ class DictionaryApp:
 
     def toggle_capture_mode(self):
         """切换取词模式"""
-        self.capture.hover_enabled = self.enable_hover_var.get()
+        self.capture.hover_enabled = self.view.enable_hover_var.get()
         if not self.capture.running:
             # 启动取词模式
             try:
@@ -241,32 +182,9 @@ class DictionaryApp:
             self._render_capture_state()
 
     def _render_capture_state(self):
-        """根据 controller 状态刷新取词相关 UI。"""
+        """根据 controller 状态刷新取词相关 UI（委托给 MainView）。"""
         self.capture_mode = self.capture.running
-        status_text = f"取词模式: {self.capture.status_text}"
-        if self.capture.running:
-            self.capture_btn.config(
-                text="停止取词模式",
-                bg=COLORS["danger_bg"], fg=COLORS["danger_text"],
-            )
-            self.status_label.config(
-                text=status_text, fg=COLORS["success_text"]
-            )
-            self._set_led(True)
-        else:
-            self.capture_btn.config(
-                text="启动取词模式",
-                bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"],
-            )
-            self.status_label.config(
-                text=status_text, fg=COLORS["text_disabled"]
-            )
-            self._set_led(False)
-
-    def _set_led(self, on: bool):
-        """更新取词状态灯颜色"""
-        color = COLORS["success_led"] if on else COLORS["text_disabled"]
-        self.capture_led.itemconfig(self._led_item, fill=color)
+        self.view.refresh_capture(self.capture.running, self.capture.status_text)
 
     def toggle_window_topmost(self):
         """切换窗口置顶状态"""
@@ -275,25 +193,13 @@ class DictionaryApp:
         self.root.attributes('-topmost', new_state)
         # 用户主动操作置顶，后续取词的临时置顶不再自动恢复
         self._user_manually_pinned = True
-
-        if new_state:
-            self.window_btn.config(
-                text="取消置顶", bg=COLORS["primary"],
-                fg=COLORS["primary_text_on"],
-            )
-        else:
-            self.window_btn.config(
-                text="置顶显示", bg=COLORS["neutral_bg"],
-                fg=COLORS["text_secondary"],
-            )
+        self.view.set_topmost_mode(new_state)
 
     def hide_window(self):
         """隐藏窗口"""
         self.root.withdraw()  # 隐藏窗口
         self.window_visible = False
-        self.hide_btn.config(
-            text="显示窗口", bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"]
-        )
+        self.view.set_hide_state(True)
 
         # 取消之前的定时器
         if self.auto_hide_timer:
@@ -313,9 +219,7 @@ class DictionaryApp:
             self.current_window_height,
         )
         self.window_visible = True
-        self.hide_btn.config(
-            text="隐藏窗口", bg=COLORS["neutral_bg"], fg=COLORS["text_secondary"]
-        )
+        self.view.set_hide_state(False)
 
     def on_focus_in(self, event=None):
         """窗口获得焦点时的处理"""
@@ -323,24 +227,6 @@ class DictionaryApp:
         if self.auto_hide_timer:
             self.root.after_cancel(self.auto_hide_timer)
             self.auto_hide_timer = None
-
-    def clean_punctuation(self, text):
-        """清理文本前后的标点符号"""
-        if not text:
-            return text
-
-        # 中英文标点符号
-        punctuation_chars = '.,!?;:"\'`，。！？；："\'（）【】《》<>[]{}()'
-
-        # 清理开头的标点符号
-        while text and text[0] in punctuation_chars:
-            text = text[1:]
-
-        # 清理结尾的标点符号
-        while text and text[-1] in punctuation_chars:
-            text = text[:-1]
-
-        return text.strip()
 
     def set_mouse_position(self, x, y):
         """记录鼠标取词位置"""
@@ -413,7 +299,7 @@ class DictionaryApp:
     def show_capture_notification(self, word):
         """显示捕获成功的通知"""
         # 创建临时通知标签
-        notification = Label(self.top_frame, text=f"已捕获: {word}",
+        notification = Label(self.view.top, text=f"已捕获: {word}",
                            font=FONTS["caption"], fg=COLORS["primary"],
                            bg=COLORS["card"])
         notification.pack(side=RIGHT, padx=PAD["pad_md"])
@@ -421,39 +307,7 @@ class DictionaryApp:
         # 3秒后自动移除通知
         self.root.after(3000, notification.destroy)
 
-    # P3-2/P3-6：加载 spinner 帧 + 进度文案
-    _SPINNER_FRAMES = ["|", "/", "-", "\\"]
-
-    def _make_spinner(self, parent, text):
-        """创建带 spinning 动画的进度标签。
-
-        返回 (label, stop)。stop() 停止动画并销毁标签，幂等。
-        """
-        label = Label(parent, text=f"{self._SPINNER_FRAMES[0]} {text}",
-                      font=FONTS["label"], fg=COLORS["text_secondary"])
-        label.pack(anchor=W, pady=PAD["pad_md"])
-        state = {"running": True}
-
-        def _spin(idx):
-            if not state["running"]:
-                return
-            label.config(text=f"{self._SPINNER_FRAMES[idx % 4]} {text}")
-            state["timer"] = label.after(120, lambda: _spin(idx + 1))
-
-        def _stop():
-            state["running"] = False
-            try:
-                if state.get("timer"):
-                    label.after_cancel(state["timer"])
-            except Exception:
-                pass
-            try:
-                label.destroy()
-            except Exception:
-                pass
-
-        _spin(0)
-        return label, _stop
+    # P3-2/P3-6：加载 spinner 由独立组件 spinner.make_spinner 提供
 
     def search(self):
         word = self.entry.get().strip()
@@ -463,7 +317,7 @@ class DictionaryApp:
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
 
-        _, stop_spinner = self._make_spinner(self.scrollable_frame, f"正在查词: {word}")
+        _, stop_spinner = make_spinner(self.scrollable_frame, f"正在查词: {word}")
         self.root.update()
 
         def on_result(data):

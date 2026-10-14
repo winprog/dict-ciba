@@ -112,6 +112,22 @@ def _restore_window_state(self):
 
 **音频播放** `play_audio` 整体移入独立文件 `audio_player.py`，UI 层只调用接口。
 
+#### 执行结果
+
+实际拆分产出了比原方案更细的模块表。`dictionary_gui.py`（`DictionaryApp`）由 1150 行收敛至 ~410 行；原方案中"≤400 行"按**逻辑/职责**达成而非机械压行（详见下文清洗项）。最终模块划分：
+
+| 模块 | 职责 |
+|---|---|
+| `ui_builder.py` `MainView` | 顶栏操作面板/输入面板分组装配 + `bind_actions` 行为绑定 + `refresh_capture`/`set_led`/`set_topmost_mode`/`set_hide_state`/`focus_input` 状态刷新，消除对裸按钮的属性回传 |
+| `window_manager.py` `WindowManager` | 窗口放置/置顶管理收口（消除 `_find_x11_window_id`/`_ensure_window_sticky` 长方法） |
+| `llm_chat_view.py` `LLMChatView` | LLM 对话视图渲染收口 |
+| `scroll_area.py` `ScrollArea` | 可滚动结果区（canvas/scrollbar/滚轮/布局刷新）收口 |
+| `spinner.py` | 四帧加载 spinner 独立组件（原主类 `_make_spinner` 下沉） |
+| `capture_controller.py`/`search_controller.py`/`llm_conversation.py`/`result_renderer.py` | 取词/搜索/对话/渲染四控制器 |
+| `window_manager.py`/`desktop_placement.py` | Facade + 窗口几何/置顶 |
+
+**清洗项（改设计而不是改逻辑）**：删除 `dictionary_gui` 中死代码 `clean_punctuation`（与 `WordStateManager` 重复且未被调用）、冗余 `_llm_input` 字段、重复 `capture_mode` 初值、`canvas_window_id` 死字段；`SPACING`/`html`/`markdown`/`HtmlFrame`/`ttk`/`SearchHistory` 未用 import 全量清理。
+
 #### 消除 `wraplength_labels` hack
 
 用 `Text` 组件替换结果区的 `Canvas + Frame` 方案，`Text` 原生支持 `wrap=WORD` 自适应容器宽度，不需要手动维护 wraplength 列表。
