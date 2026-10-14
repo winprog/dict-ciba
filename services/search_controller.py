@@ -5,7 +5,7 @@
 """
 
 import threading
-from iciba import query_word
+from services.iciba import query_word
 
 
 class SearchController:

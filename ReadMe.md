@@ -51,11 +51,30 @@ Dict-CiBa是一个轻量级的桌面翻译工具，专门为需要频繁查阅�
 
 ```
 dict-ciba/
-├── dictionary_gui.py      # 主GUI界面和窗口管理
-├── word_capture_service.py # 屏幕取词服务
-├── word_state_manager.py   # 单词状态管理器（新增）
-├── iciba.py              # 金山词霸API接口
-└── requirements.txt      # 项目依赖
+├── dictionary_gui.py      # 主GUI入口（根）
+├── services/              # 业务服务包
+│   ├── iciba.py          # 金山词霸API接口
+│   ├── llm_client.py     # 通用 LLM 客户端
+│   ├── llm_conversation.py  # LLM 对话状态
+│   ├── search_controller.py # 取词搜索分流调度
+│   ├── search_history.py    # 搜索历史
+│   ├── capture_controller.py # 取词控制器
+│   ├── word_capture_service.py # 屏幕取词服务
+│   ├── word_state_manager.py   # 单词状态管理器
+│   ├── audio_player.py     # 音频播放
+│   ├── logger.py           # 日志
+│   ├── desktop_placement.py # 窗口/桌面定位
+│   └── window_manager.py   # 窗口管理
+├── ui/                    # 界面渲染包
+│   ├── ui_constants.py    # 颜色/字体/间距常量
+│   ├── ui_builder.py      # 主视图装配与行为绑定
+│   ├── result_renderer.py # 结果渲染
+│   ├── llm_chat_view.py   # LLM 对话气泡视图
+│   ├── scroll_area.py     # 可滚动结果区
+│   └── spinner.py         # 加载动效
+├── scripts/               # 一次性实验/运维脚本
+├── tests/                 # 单元测试
+└── requirements.txt       # 项目依赖
 ```
 
 ### 架构设计

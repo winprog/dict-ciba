@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from llm_conversation import LLMConversation
+from services.llm_conversation import LLMConversation
 
 
 class Gate:

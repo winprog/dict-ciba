@@ -12,8 +12,8 @@ App 只通过 bind_actions 注入需要触发的业务回调。
 
 from tkinter import *
 from tkinter import ttk
-from search_history import SearchHistory
-from ui_constants import COLORS, FONTS, PAD
+from services.search_history import SearchHistory
+from ui.ui_constants import COLORS, FONTS, PAD
 
 
 class MainView:

@@ -8,7 +8,7 @@ _force_canvas_resize / _on_canvas_resize / 滚轮处理三处散落逻辑。
 from tkinter import *
 
 try:
-    from logger import get_logger
+    from services.logger import get_logger
 except Exception:  # 独立运行兜底
     import logging
     get_logger = logging.getLogger

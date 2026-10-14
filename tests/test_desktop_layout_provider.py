@@ -9,7 +9,7 @@ Adapter 把脆弱的 wmctrl 工具链解析成稳定的 DesktopLayout，测试�
 """
 from types import SimpleNamespace
 
-from desktop_placement import DesktopLayout, DesktopLayoutProvider
+from services.desktop_placement import DesktopLayout, DesktopLayoutProvider
 
 # 真实 GNOME 50.1 系统的 wmctrl -d 输出（当前活跃桌面为 1，`*` 标记）
 GNOME_WMCTRL_OUT = """\

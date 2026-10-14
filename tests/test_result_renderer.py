@@ -8,7 +8,7 @@ import tkinter as tk
 
 import pytest
 
-from result_renderer import ResultRenderer
+from ui.result_renderer import ResultRenderer
 
 
 @pytest.fixture(scope="module")

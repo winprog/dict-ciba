@@ -8,7 +8,7 @@ import json
 import os
 
 try:
-    from logger import get_logger
+    from services.logger import get_logger
 except Exception:  # 独立运行兜底
     import logging
     get_logger = logging.getLogger

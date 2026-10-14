@@ -10,7 +10,7 @@ Sticky：把 _NET_WM_DESKTOP 设为 -1（0xFFFFFFFF），窗口驻留所有桌�
 """
 import pytest
 
-from desktop_placement import (
+from services.desktop_placement import (
     sticky_desktop_value,
     is_sticky_desktop,
     net_wm_desktop_literal,

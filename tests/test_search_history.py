@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from search_history import SearchHistory
+from services.search_history import SearchHistory
 
 
 def test_add_recent_first(tmp_path):

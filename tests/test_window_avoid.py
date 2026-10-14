@@ -3,7 +3,7 @@
 取词时鼠标周围通常是正在阅读的文档，翻译窗口若贴近鼠标会遮挡内容。
 该策略把窗口放到离取词点最远的屏幕象限，只用一个 margin 保证不贴屏边。
 """
-from desktop_placement import (
+from services.desktop_placement import (
     DesktopLayout,
     DesktopResolver,
     PlacementInput,

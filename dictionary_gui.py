@@ -7,25 +7,25 @@ import time
 from typing import Optional, Dict, Any
 from tkinter import *
 from tkinter import messagebox
-from logger import get_logger, setup as setup_logging
+from services.logger import get_logger, setup as setup_logging
 
 logger = get_logger(__name__)
 
 # 导入取词服务
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from capture_controller import CaptureController
-from search_controller import SearchController
-from word_state_manager import WordStateManager
-from llm_conversation import LLMConversation
-from result_renderer import ResultRenderer
-from llm_client import chat_messages as llm_chat_messages
-from desktop_placement import WindowPlacementService
-from window_manager import WindowManager
-from llm_chat_view import LLMChatView
-from scroll_area import ScrollArea
-from ui_builder import MainView
-from ui_constants import COLORS, FONTS, PAD
-from spinner import make_spinner
+from services.capture_controller import CaptureController
+from services.search_controller import SearchController
+from services.word_state_manager import WordStateManager
+from services.llm_conversation import LLMConversation
+from ui.result_renderer import ResultRenderer
+from services.llm_client import chat_messages as llm_chat_messages
+from services.desktop_placement import WindowPlacementService
+from services.window_manager import WindowManager
+from ui.llm_chat_view import LLMChatView
+from ui.scroll_area import ScrollArea
+from ui.ui_builder import MainView
+from ui.ui_constants import COLORS, FONTS, PAD
+from ui.spinner import make_spinner
 
 
 class DictionaryApp:

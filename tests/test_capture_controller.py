@@ -3,8 +3,8 @@
 monkeypatch 替换模块级 start_service/stop_service/on_capture（不触碰真实
 取词服务），验证生命周期状态机与 status_text 文案。
 """
-import capture_controller as cc
-from capture_controller import CaptureController
+from services import capture_controller as cc
+from services.capture_controller import CaptureController
 
 
 def _make(monkeypatch, calls, registered=None):

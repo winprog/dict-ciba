@@ -23,20 +23,20 @@ LLM API 调用天生慢（5-30秒），且可能因网络波动无限挂起。�
 **正确示例：**
 
 ```bash
-bash -c 'source env.sh && timeout 60 python3 llm_client.py "你的prompt"'
+bash -c 'source env.sh && timeout 60 python3 services/llm_client.py "你的prompt"'
 ```
 
 **错误示例：**
 
 ```bash
 # ❌ 没有 timeout，进程可能永远挂起
-python3 llm_client.py "你的prompt"
+python3 services/llm_client.py "你的prompt"
 
 # ❌ 用 blocking=false + 长轮询，进程可能早已退出但还在傻等
 RunCommand(blocking=false, wait_ms_before_check=20000, ...)
 
 # ❌ 忘记 source env.sh，会因为缺少 API Key 报错
-bash -c 'timeout 60 python3 llm_client.py "你的prompt"'
+bash -c 'timeout 60 python3 services/llm_client.py "你的prompt"'
 ```
 
 ### 执行命令的输出获取
@@ -50,7 +50,7 @@ bash -c 'timeout 60 python3 llm_client.py "你的prompt"'
 **示例：**
 
 ```bash
-bash -c 'source env.sh && python3 llm_client.py "你的prompt" > /tmp/llm_out.txt 2>&1'
+bash -c 'source env.sh && python3 services/llm_client.py "你的prompt" > /tmp/llm_out.txt 2>&1'
 ```
 
 ### 项目依赖
@@ -61,5 +61,5 @@ bash -c 'source env.sh && python3 llm_client.py "你的prompt" > /tmp/llm_out.tx
 
 ### 文件结构
 
-- `llm_client.py` — 通用 LLM 客户端，提供 chat() 函数
+- `services/llm_client.py` — 通用 LLM 客户端，提供 chat() 函数
 - `env.sh` — 环境变量配置（LLM_API_KEY, LLM_BASE_URL, LLM_MODEL）

@@ -3,7 +3,7 @@
 Facade 把"解析布局 -> 判桌面 -> 算窗口几何"串成单个入口。这里的纯几何计算
 （窗口置于鼠标上方/下方/角落、边界裁剪、无鼠标兜底）用已知字面量断言。
 """
-from desktop_placement import (
+from services.desktop_placement import (
     DesktopLayout,
     DesktopResolver,
     PlacementInput,
