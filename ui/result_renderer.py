@@ -5,8 +5,8 @@
 （canvas 尺寸、状态记录）仍留在 UI 层；换行高度感知收口在本类内部。
 """
 from tkinter import Label, Frame, Button, LEFT, RIGHT, W, X
-from ui_constants import COLORS, FONTS, PAD
-from audio_player import play_audio
+from ui.ui_constants import COLORS, FONTS, PAD
+from services.audio_player import play_audio
 
 
 class ResultRenderer:

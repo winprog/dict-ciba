@@ -3,7 +3,7 @@ import tkinter as tk
 
 import pytest
 
-from spinner import make_spinner
+from ui.spinner import make_spinner
 
 
 @pytest.fixture(scope="module")

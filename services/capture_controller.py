@@ -10,7 +10,7 @@
 """
 
 import time
-from word_capture_service import start_service, stop_service, on_capture
+from services.word_capture_service import start_service, stop_service, on_capture
 
 
 class CaptureController:

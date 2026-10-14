@@ -5,7 +5,7 @@ Event 同步；注入假 _query 替换真实 iciba 查询，不触碰网络。
 """
 import threading
 
-from search_controller import SearchController
+from services.search_controller import SearchController
 
 
 # ---- _phrase_is_good 纯逻辑 ----

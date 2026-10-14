@@ -4,7 +4,7 @@
 属性，只响应 _NET_WM_DESKTOP 的 ClientMessage 通知（source=1）。
 本测试锁定 sticky 通知所需的窗口逻辑参数。
 """
-from desktop_placement import (
+from services.desktop_placement import (
     sticky_client_message_data,
     sticky_source_indication,
 )

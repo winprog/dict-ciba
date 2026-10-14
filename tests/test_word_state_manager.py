@@ -5,7 +5,7 @@ Tk/显示环境。以下用已知正确的手写字面量作为独立事实来�
 """
 import pytest
 
-from word_state_manager import WordStateManager
+from services.word_state_manager import WordStateManager
 
 
 @pytest.fixture

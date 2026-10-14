@@ -9,7 +9,7 @@ scenario 对应 GNOME workspace 模型（所有 VP 相同）与老式 viewport �
 """
 import pytest
 
-from desktop_placement import DesktopLayout, DesktopResolver, Placement
+from services.desktop_placement import DesktopLayout, DesktopResolver, Placement
 
 
 def _workspace_layout(current, num_desktops=6, vw=3840, vh=2160):

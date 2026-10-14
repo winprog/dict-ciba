@@ -1,7 +1,7 @@
 """加载 spinner 动画（独立渲染组件，供业务层在查询期间展示非阻塞进度）。"""
 from tkinter import Label
 
-from ui_constants import COLORS, FONTS, PAD
+from ui.ui_constants import COLORS, FONTS, PAD
 
 _FLAG = ["|", "/", "-", "\\"]
 

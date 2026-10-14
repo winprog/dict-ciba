@@ -9,8 +9,8 @@ import tkinter as tk
 
 import pytest
 
-import llm_chat_view
-from ui_constants import COLORS, FONTS
+from ui import llm_chat_view
+from ui.ui_constants import COLORS, FONTS
 
 
 @pytest.fixture(scope="module")

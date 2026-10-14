@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-import audio_player
+from services import audio_player
 
 
 class FakeResult:

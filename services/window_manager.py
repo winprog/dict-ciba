@@ -7,7 +7,7 @@
 import subprocess
 
 try:
-    from logger import get_logger
+    from services.logger import get_logger
 except Exception:  # 独立运行兜底
     import logging
     get_logger = logging.getLogger
@@ -84,7 +84,7 @@ class WindowManager:
 
             from Xlib import display as xdisplay, X
             from Xlib.protocol import event as xevent
-            from desktop_placement import sticky_client_message_data
+            from services.desktop_placement import sticky_client_message_data
 
             d = xdisplay.Display()
             root = d.screen().root

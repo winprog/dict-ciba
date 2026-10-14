@@ -10,7 +10,7 @@
 
 from tkinter import *
 import re
-from ui_constants import COLORS, FONTS, PAD
+from ui.ui_constants import COLORS, FONTS, PAD
 
 
 def _markdown_to_plain(text: str) -> str:

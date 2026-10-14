@@ -8,7 +8,7 @@ import tkinter as tk
 
 import pytest
 
-from scroll_area import ScrollArea, _SCROLLBAR_W
+from ui.scroll_area import ScrollArea, _SCROLLBAR_W
 
 
 @pytest.fixture(scope="module")
