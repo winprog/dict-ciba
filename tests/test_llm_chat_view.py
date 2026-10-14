@@ -1,15 +1,16 @@
 """LLMChatView.render 的渲染流程与回归测试。
 
-气泡改用原生 Label + wraplength 渲染（取代 HtmlFrame），因此本测试断言：
-气泡是 Label、文本正确（无 markdown 星号/无字面 <p>）、折行宽度>0，并在
-容器 resize 时刷新 wraplength —— 锁定「行高挤压」「大片空白」「横向溢出」
-等 HtmlFrame 布局回归。
+气泡改用只读 SelectableText 渲染（取代 HtmlFrame/Label），因此断言：
+气泡可选中复制、文本正确（无 markdown 星号/无字面 <p>）、wrap=word，
+锁定「行高挤压」「大片空白」「横向溢出」等 HtmlFrame 布局回归以及
+「结果不可划选复制」回归。
 """
 import tkinter as tk
 
 import pytest
 
 from ui import llm_chat_view
+from ui.selectable_text import SelectableText
 from ui.ui_constants import COLORS, FONTS
 
 
@@ -34,25 +35,31 @@ def texts(w):
 
     def walk(w):
         for ch in w.winfo_children():
-            try:
-                t = ch.cget("text")
-            except tk.TclError:
-                t = None
-            if t:
-                out.append(t)
+            if ch.winfo_class() == "Text":
+                try:
+                    out.append(ch.get("1.0", "end-1c"))
+                except tk.TclError:
+                    pass
+            else:
+                try:
+                    t = ch.cget("text")
+                except tk.TclError:
+                    t = None
+                if t:
+                    out.append(t)
             walk(ch)
 
     walk(w)
     return out
 
 
-def bubble_labels(w):
-    """返回对话气泡（带气泡背景色的 Label）。"""
+def bubble_widgets(w):
+    """返回对话气泡（带气泡背景色的 SelectableText）。"""
     bubble_bg = (COLORS["bubble_ai"], COLORS["bubble_user"])
     out = []
     for ch in w.winfo_children():
         try:
-            if ch.cget("background") in bubble_bg:
+            if isinstance(ch, SelectableText) and ch.cget("background") in bubble_bg:
                 out.append(ch)
         except tk.TclError:
             continue
@@ -69,23 +76,27 @@ def test_render_user_loading_shows_title_input_spinner(tk_root):
 
 
 def test_render_user_and_assistant_bubbles(tk_root):
-    """user 气泡保留原文本；assistant 降为纯文本且折行宽度>0。"""
+    """user 气泡保留原文本；assistant 降为纯文本；可选中复制；wrap=word。"""
     v = make_view(tk_root)
     v.render(
         [{"role": "user", "content": "a<b>c"}, {"role": "assistant", "content": "**bold** 第一段\n\n- 列表项"}],
         loading=False,
     )
-    bubbles = bubble_labels(v._frame)
+    bubbles = bubble_widgets(v._frame)
     assert len(bubbles) == 2
-    # user 气泡原样展示（Label 不做 HTML 转义，也不应有字面 <p> 残留）
-    assert bubbles[0].cget("text") == "a<b>c"
+    # user 气泡原样展示（不做 HTML 转义，也不应有字面 <p> 残留）
+    assert bubbles[0].get("1.0", "end-1c") == "a<b>c"
     # assistant 去除 ** 标记、保留内容
-    asst_text = bubbles[1].cget("text")
+    asst_text = bubbles[1].get("1.0", "end-1c")
     assert "**" not in asst_text
     assert "bold" in asst_text
     assert "•" in asst_text
-    # 每个气泡都有正折行宽度（防止横向溢出回归）
-    assert all(b.cget("wraplength") > 0 for b in bubbles)
+    # 每个气泡都按 word 折行（防横向溢出），且只读可选中（可划选复制）
+    for b in bubbles:
+        assert b.cget("wrap") == "word"
+        seqs = list(b.bind())
+        assert "<Key>" in seqs or "<Control-c>" in seqs
+        assert "<Button-3>" in seqs
 
 
 def test_render_after_widgets_destroyed_rebuilds(tk_root):
@@ -98,11 +109,10 @@ def test_render_after_widgets_destroyed_rebuilds(tk_root):
     assert "AI 多轮对话（可继续追问）" in texts(v._frame)
 
 
-def test_container_resize_refreshes_wraplength(tk_root):
-    """接到容器 resize 通知时，气泡 wraplength 与当前可用宽度步调一致。"""
+def test_bubble_is_selectable_readonly_text(tk_root):
+    """气泡是只读可选中 Text：保留划选，但禁键盘编辑（不可修改文本）。"""
     v = make_view(tk_root)
     v.render([{"role": "assistant", "content": "body"}], loading=False)
-    v._on_container_resize()
-    b = bubble_labels(v._frame)[0]
-    assert v._wrap_width() >= 120
-    assert b.cget("wraplength") == v._wrap_width()
+    b = bubble_widgets(v._frame)[0]
+    assert isinstance(b, tk.Text)
+    assert b.cget("wrap") == "word"
