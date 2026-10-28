@@ -59,6 +59,29 @@ class ScrollArea(Frame):
         self.frame.update_idletasks()
         self._refresh(self.canvas.winfo_width())
 
+    def scroll_to_widget(self, w):
+        """把内容区内控件 w 的顶部对齐到视口顶部。
+
+        用于 LLM 回答到达后定位到「最新回答的起始处」，避免停留在回答末尾、
+        不得不再向上滚动去读开头。w 为 None（如尚无回答）时不做任何操作。
+        """
+        if w is None:
+            return
+        try:
+            self.frame.update_idletasks()
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            bbox = self.canvas.bbox("all")
+            if not bbox:
+                return
+            total = bbox[3] - bbox[1]
+            if total <= 0:
+                return
+            # w 的 y 为相对内容 Frame（即内容顶部偏移），换算成滚动比例
+            y = w.winfo_y() - bbox[1]
+            self.canvas.yview_moveto(max(0.0, min(1.0, y / total)))
+        except TclError:
+            pass
+
     def _fit_content(self, event=None):
         """Canvas 尺寸变化时，让内容 Frame 撑满并重算换行。"""
         self._refresh(self.canvas.winfo_width())

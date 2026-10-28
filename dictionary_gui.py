@@ -372,8 +372,14 @@ class DictionaryApp:
         self._llm_scroll_to_input()
 
     def _llm_scroll_to_input(self):
-        """把结果区滚到最底，让最新消息气泡与追问输入框立即可见。"""
+        """把结果区滚到最底，让最新消息气泡（或加载态）与追问输入框立即可见。"""
         self.root.after(0, lambda: self.scroll_area.canvas.yview_moveto(1.0))
+
+    def _llm_scroll_to_latest_answer(self):
+        """回答到达后，把视口定位到最新一轮「问题」的起始处，让追问与回答开头一起显示。"""
+        v = self.llm_view
+        anchor = v.latest_question_widget or v.latest_answer_widget
+        self.root.after(0, lambda: self.scroll_area.scroll_to_widget(anchor))
 
     def _ask_llm(self):
         """提交追问"""
@@ -391,12 +397,12 @@ class DictionaryApp:
         if isinstance(self.current_data, dict):
             self.current_data["translation"] = ans
         self.llm_view.render(self.conv.history, loading=False)
-        self._llm_scroll_to_input()
+        self._llm_scroll_to_latest_answer()
 
     def _llm_error(self, error):
         self.conv.append_assistant(f"⚠️ {error}")
         self.llm_view.render(self.conv.history, loading=False)
-        self._llm_scroll_to_input()
+        self._llm_scroll_to_latest_answer()
 
     def display_result(self, data):
         """渲染词典/LLM 查询结果（委托给 ResultRenderer）"""

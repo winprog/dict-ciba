@@ -85,3 +85,31 @@ def test_scrollregion_grows_when_content_added_after_resize(tk_root):
 
     assert second > first
     assert second >= area.frame.winfo_reqheight()
+
+
+def test_scroll_to_widget_aligns_top(tk_root, monkeypatch):
+    """scroll_to_widget 把目标控件顶部对齐到视口顶部（回答到达后定位到回答开头）。"""
+    area = make_area(tk_root)
+    tk.Label(area.frame, text="标题").pack(anchor="w")
+    tk.Label(area.frame, text=("较长的上文内容。") * 40, wraplength=200, justify="left").pack(anchor="w", fill="x")
+    target = tk.Label(area.frame, text="最新回答开头的锚点")
+    target.pack(anchor="w")
+    tk.Label(area.frame, text=("下面还有更多长内容。") * 40, wraplength=200, justify="left").pack(anchor="w", fill="x")
+    area._refresh(area.canvas.winfo_width())
+
+    captured = {}
+    monkeypatch.setattr(area.canvas, "yview_moveto", lambda f: captured.setdefault("f", f))
+    area.scroll_to_widget(target)
+
+    bbox = area.canvas.bbox("all")
+    total = bbox[3] - bbox[1]
+    expected = max(0.0, min(1.0, target.winfo_y() / total))
+    assert "f" in captured
+    assert abs(captured["f"] - expected) < 1e-6, f"fraction={captured['f']} 期望 {expected}"
+
+
+def test_scroll_to_widget_none_is_noop(tk_root):
+    """"尚无回答（latest=None）时 scroll_to_widget 不做任何滚动。"""
+    area = make_area(tk_root)
+    area.scroll_to_widget(None)  # 不应抛异常
+    assert True

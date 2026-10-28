@@ -116,3 +116,54 @@ def test_bubble_is_selectable_readonly_text(tk_root):
     b = bubble_widgets(v._frame)[0]
     assert isinstance(b, tk.Text)
     assert b.cget("wrap") == "word"
+
+
+def test_latest_answer_widget_tracks_last_assistant(tk_root):
+    """latest_answer_widget 总是指向最后一个 AI 回答气泡，供视口定位到回答开头。"""
+    v = make_view(tk_root)
+    v.render([{"role": "user", "content": "q"}], loading=False)
+    assert v.latest_answer_widget is None          # 尚无 AI 回答
+
+    v.render(
+        [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a1"}],
+        loading=False,
+    )
+    w1 = v.latest_answer_widget
+    assert isinstance(w1, SelectableText)
+    assert w1.get("1.0", "end-1c") == "a1"
+
+    # 再次追问并追加新回答：应指向最新的 a2，而不是旧的 a1
+    v.render(
+        [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "q2"},
+            {"role": "assistant", "content": "a2"},
+        ],
+        loading=False,
+    )
+    w2 = v.latest_answer_widget
+    assert w2 is not w1
+    assert w2.get("1.0", "end-1c") == "a2"
+
+
+def test_latest_question_widget_tracks_last_user(tk_root):
+    """latest_question_widget 总是指向最后一轮追问，供视口把问题与回答一起显示。"""
+    v = make_view(tk_root)
+    v.render([{"role": "user", "content": "首问"}], loading=False)
+    q1 = v.latest_question_widget
+    assert isinstance(q1, SelectableText)
+    assert q1.get("1.0", "end-1c") == "首问"
+
+    v.render(
+        [
+            {"role": "user", "content": "首问"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "追问2"},
+            {"role": "assistant", "content": "a2"},
+        ],
+        loading=False,
+    )
+    q2 = v.latest_question_widget
+    assert q2 is not q1
+    assert q2.get("1.0", "end-1c") == "追问2"

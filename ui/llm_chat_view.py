@@ -34,10 +34,22 @@ class LLMChatView:
         self._on_resize = on_resize
         self._on_submit = on_submit
         self._llm_input = None
+        self._latest_answer = None
+        self._latest_question = None
 
     @property
     def llm_input(self):
         return self._llm_input
+
+    @property
+    def latest_answer_widget(self):
+        """最后一个 AI 回答气泡（供调用方把视口定位到回答开头）。"""
+        return self._latest_answer
+
+    @property
+    def latest_question_widget(self):
+        """最后一轮追问的用户问题气泡（供视口定位，让问题与回答开头一起可见）。"""
+        return self._latest_question
 
     def render(self, history, loading):
         """整体重绘对话区。
@@ -52,6 +64,8 @@ class LLMChatView:
         Label(self._frame, text="AI 多轮对话（可继续追问）",
               font=FONTS["label_bold"], fg=COLORS["primary"]).pack(anchor=W, pady=(0, PAD["pad_l"]))
 
+        self._latest_answer = None
+        self._latest_question = None
         for msg in history:
             role = msg["role"]
             text = (msg["content"] if role == "user"
@@ -65,6 +79,10 @@ class LLMChatView:
                 pad=8,
             )
             bubble.pack(fill=X, anchor=E if role == "user" else W, pady=PAD["pad_xs"])
+            if role == "assistant":
+                self._latest_answer = bubble
+            else:
+                self._latest_question = bubble
 
         if loading and latest == "user":
             Label(self._frame, text="AI 思考中...",
