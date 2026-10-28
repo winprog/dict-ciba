@@ -11,6 +11,7 @@ import pytest
 
 from ui import llm_chat_view
 from ui.selectable_text import SelectableText
+from ui.table_widget import TableWidget
 from ui.ui_constants import COLORS, FONTS
 
 
@@ -116,6 +117,33 @@ def test_bubble_is_selectable_readonly_text(tk_root):
     b = bubble_widgets(v._frame)[0]
     assert isinstance(b, tk.Text)
     assert b.cget("wrap") == "word"
+
+
+def test_assistant_with_table_renders_table_widget(tk_root):
+    """assistant 内容里的 markdown 表格应渲染成 TableWidget，
+    且非表格段落仍为纯文本气泡，不再出现字面 | --- |。"""
+    md = (
+        "前言\n\n"
+        "| 生物学概念 | 说明 |\n"
+        "| --- | --- |\n"
+        "| 基因拷贝数 | 更多=更多 |\n"
+        "\n结语\n"
+    )
+    v = make_view(tk_root)
+    v.render([{"role": "user", "content": "q"}, {"role": "assistant", "content": md}], loading=False)
+
+    tables = [c for c in v._frame.winfo_children() if isinstance(c, TableWidget)]
+    assert len(tables) == 1
+    t = tables[0]
+    assert [c.get("1.0", "end-1c") for c in t.header_cells] == ["生物学概念", "说明"]
+    assert [c.get("1.0", "end-1c") for c in t.cells] == ["基因拷贝数", "更多=更多"]
+
+    all_text = "\n".join(texts(v._frame))
+    assert "前言" in all_text and "结语" in all_text
+    assert "| --- |" not in all_text
+    # 非表格段落仍是气泡背景的 SelectableText
+    plain = bubble_widgets(v._frame)
+    assert any(b.get("1.0", "end-1c") == "前言" for b in plain)
 
 
 def test_latest_answer_widget_tracks_last_assistant(tk_root):

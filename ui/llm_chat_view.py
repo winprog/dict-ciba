@@ -12,6 +12,8 @@ from tkinter import *
 import re
 from ui.ui_constants import COLORS, FONTS, PAD
 from ui.selectable_text import SelectableText
+from ui.markdown_blocks import split_blocks
+from ui.table_widget import TableWidget
 
 
 def _markdown_to_plain(text: str) -> str:
@@ -68,21 +70,36 @@ class LLMChatView:
         self._latest_question = None
         for msg in history:
             role = msg["role"]
-            text = (msg["content"] if role == "user"
-                    else _markdown_to_plain(msg["content"]))
-            bubble = SelectableText(
-                self._frame,
-                text,
-                font=FONTS["body"],
-                fg=(COLORS["bubble_user_text"] if role == "user" else COLORS["bubble_ai_text"]),
-                bg=(COLORS["bubble_user"] if role == "user" else COLORS["bubble_ai"]),
-                pad=8,
-            )
-            bubble.pack(fill=X, anchor=E if role == "user" else W, pady=PAD["pad_xs"])
-            if role == "assistant":
-                self._latest_answer = bubble
-            else:
+            if role == "user":
+                bubble = SelectableText(
+                    self._frame,
+                    msg["content"],
+                    font=FONTS["body"],
+                    fg=COLORS["bubble_user_text"],
+                    bg=COLORS["bubble_user"],
+                    pad=8,
+                )
+                bubble.pack(fill=X, anchor=E, pady=PAD["pad_xs"])
                 self._latest_question = bubble
+            else:
+                last = None
+                for block in split_blocks(msg["content"]):
+                    if block.kind == "text":
+                        last = SelectableText(
+                            self._frame,
+                            _markdown_to_plain(block.content),
+                            font=FONTS["body"],
+                            fg=COLORS["bubble_ai_text"],
+                            bg=COLORS["bubble_ai"],
+                            pad=8,
+                        )
+                        last.pack(fill=X, anchor=W, pady=PAD["pad_xs"])
+                    else:
+                        last = TableWidget(
+                            self._frame, header=block.header, rows=block.rows,
+                        )
+                        last.pack(fill=X, anchor=W, pady=PAD["pad_xs"])
+                self._latest_answer = last
 
         if loading and latest == "user":
             Label(self._frame, text="AI 思考中...",
