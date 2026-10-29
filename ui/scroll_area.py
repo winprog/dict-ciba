@@ -60,10 +60,15 @@ class ScrollArea(Frame):
         self._refresh(self.canvas.winfo_width())
 
     def scroll_to_widget(self, w):
-        """把内容区内控件 w 的顶部对齐到视口顶部。
+        """把控件 w 的顶部对齐到视口顶部。
 
-        用于 LLM 回答到达后定位到「最新回答的起始处」，避免停留在回答末尾、
-        不得不再向上滚动去读开头。w 为 None（如尚无回答）时不做任何操作。
+        用于 LLM 回答到达后定位到「最新一轮问题的起始处」，避免停留在回答
+        末尾、不得不再向上滚动去读开头。
+
+        视口感知：若 w 下方剩余内容不足一屏（回答很短、紧接着追问输入框），
+        改为贴底，保住追问输入框不被挤出视口；否则把 w 的顶部固定在视口顶，
+        w 下方的内容仍可继续向下滚动阅读（修复长回答时被顶到最底、看不到
+        问题且无法再下滚的问题）。
         """
         if w is None:
             return
@@ -76,9 +81,16 @@ class ScrollArea(Frame):
             total = bbox[3] - bbox[1]
             if total <= 0:
                 return
-            # w 的 y 为相对内容 Frame（即内容顶部偏移），换算成滚动比例
             y = w.winfo_y() - bbox[1]
-            self.canvas.yview_moveto(max(0.0, min(1.0, y / total)))
+            view = self.canvas.winfo_height()
+            if view <= 0:
+                view = 120
+            if total - y < view:
+                # 目标下方不足一屏 → 贴底，让追问输入框仍在视口内
+                self.canvas.yview_moveto(1.0)
+            else:
+                # 目标顶部对齐视口顶（yview 自行裁剪到有效比例）
+                self.canvas.yview_moveto(max(0.0, min(1.0, y / total)))
         except TclError:
             pass
 
