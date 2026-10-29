@@ -462,11 +462,15 @@ def start_service(enable_mouse_hover=True):
 
 
 def stop_service():
-    """停止取词服务"""
+    """停止取词服务。
+
+    保留单例实例（不置 None）：实例上绑定的 capture 回调（GUI 侧在
+    CaptureController 构造时通过 on_capture 绑定）必须跨「停止→再启动」
+    存活，否则重新构建的新实例没有回调，取词后无法回传结果。
+    """
     global _service_instance
-    if _service_instance:
+    if _service_instance and _service_instance.running:
         _service_instance.stop()
-        _service_instance = None
 
 
 def on_capture(callback):
