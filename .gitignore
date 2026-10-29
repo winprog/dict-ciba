@@ -10,3 +10,5 @@ __pycache__
 *.log
 .marscode
 env.sh
+# LLM 对话总结导出目录（本地产物，不入仓）
+exports/

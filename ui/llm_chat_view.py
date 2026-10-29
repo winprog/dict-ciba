@@ -31,13 +31,20 @@ def _markdown_to_plain(text: str) -> str:
 class LLMChatView:
     """渲染 LLM 多轮对话历史与追问输入行。"""
 
-    def __init__(self, frame, on_resize, on_submit):
+    def __init__(self, frame, on_resize, on_submit, on_export_summary=None):
         self._frame = frame
         self._on_resize = on_resize
         self._on_submit = on_submit
+        self._on_export_summary = on_export_summary
+        self._summary_btn = None
         self._llm_input = None
         self._latest_answer = None
         self._latest_question = None
+
+    @property
+    def summary_btn(self):
+        """顶部「导出对话总结」按钮（供调用方切换禁用/文案）。"""
+        return self._summary_btn
 
     @property
     def llm_input(self):
@@ -63,8 +70,17 @@ class LLMChatView:
         for widget in self._frame.winfo_children():
             widget.destroy()
 
-        Label(self._frame, text="AI 多轮对话（可继续追问）",
-              font=FONTS["label_bold"], fg=COLORS["primary"]).pack(anchor=W, pady=(0, PAD["pad_l"]))
+        head = Frame(self._frame)
+        head.pack(fill=X, pady=(0, PAD["pad_l"]))
+        Label(head, text="AI 多轮对话（可继续追问）",
+              font=FONTS["label_bold"], fg=COLORS["primary"]).pack(anchor=W, side=LEFT)
+        self._summary_btn = Button(
+            head, text="导出对话总结",
+            command=self._on_export_summary or (lambda: None),
+            bg=COLORS["primary"], fg=COLORS["primary_text_on"],
+            font=FONTS["small"], relief=FLAT, cursor="hand2",
+        )
+        self._summary_btn.pack(side=RIGHT)
 
         self._latest_answer = None
         self._latest_question = None

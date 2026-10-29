@@ -4,12 +4,16 @@ import subprocess
 import sys
 import os
 import time
+import threading
 from typing import Optional, Dict, Any
 from tkinter import *
 from tkinter import messagebox
 from services.logger import get_logger, setup as setup_logging
 
 logger = get_logger(__name__)
+
+# LLM 对话总结导出目录（当前项目下本地工作目录，已被 .gitignore 排除、不提交仓库）
+LLM_SUMMARY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 
 # 导入取词服务
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +23,7 @@ from services.word_state_manager import WordStateManager
 from services.llm_conversation import LLMConversation
 from ui.result_renderer import ResultRenderer
 from services.llm_client import chat_messages as llm_chat_messages
+from services.summary_exporter import request_summary
 from services.desktop_placement import WindowPlacementService
 from services.window_manager import WindowManager
 from ui.llm_chat_view import LLMChatView
@@ -142,6 +147,7 @@ class DictionaryApp:
             self.scrollable_frame,
             on_resize=lambda: self.scroll_area.force_layout(),
             on_submit=self._ask_llm,
+            on_export_summary=self._export_summary,
         )
 
         # 取词模式控制（服务生命周期与状态）
@@ -390,6 +396,42 @@ class DictionaryApp:
             return  # 输入为空或上一轮仍在加载
         self.llm_view.render(self.conv.history, loading=True)
         self._llm_scroll_to_input()
+
+    def _export_summary(self):
+        """对历史问答做总结并导出到本地 exports 目录（不离场/不入仓）。
+
+        后台线程调用 LLM，完成后回主线程把总结追加进对话并提示保存路径。
+        """
+        if not self.conv.history:
+            messagebox.showinfo("导出对话总结", "暂无对话可总结。")
+            return
+        btn = self.llm_view.summary_btn
+        if btn:
+            btn.config(state=DISABLED, text="总结中…")
+        history = list(self.conv.history)
+
+        def worker():
+            try:
+                summary, path = request_summary(history, llm_chat_messages, LLM_SUMMARY_DIR)
+            except Exception as ex:
+                self.root.after(0, lambda e=ex: self._export_summary_done(None, None, e))
+                return
+            self.root.after(0, lambda s=summary, p=path: self._export_summary_done(s, p, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _export_summary_done(self, summary, path, error):
+        """总结线程的回主线程落地：恢复按钮、把结果或错误追加进对话。"""
+        btn = self.llm_view.summary_btn
+        if btn:
+            btn.config(state=NORMAL, text="导出对话总结")
+        if error is not None:
+            self.conv.append_assistant(f"⚠️ 对话总结导出失败：{error}")
+        else:
+            self.conv.append_assistant(f"📄 对话总结（已导出：{path}）\n\n{summary}")
+        self.llm_view.render(self.conv.history, loading=False)
+        if path:
+            self._llm_scroll_to_latest_answer()
 
     def _llm_commit(self, ans):
         """主线程接收 LLM 回答：写入历史并渲染"""

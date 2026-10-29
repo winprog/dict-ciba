@@ -113,3 +113,20 @@ def test_scroll_to_widget_none_is_noop(tk_root):
     area = make_area(tk_root)
     area.scroll_to_widget(None)  # 不应抛异常
     assert True
+
+
+def test_scroll_to_widget_short_tail_bottoms_out(tk_root, monkeypatch):
+    """目标下方剩余内容不足一屏（回答很短、紧接着输入框）时改为贴底，
+    而不是把 y/total 顶到接近 1，避免输入框被挤出视口。"""
+    area = make_area(tk_root)
+    tk.Label(area.frame, text="问题").pack(anchor="w")
+    anchor = tk.Label(area.frame, text="末尾锚点")
+    anchor.pack(anchor="w")
+    area._refresh(area.canvas.winfo_width())
+
+    captured = {}
+    monkeypatch.setattr(area.canvas, "yview_moveto", lambda f: captured.setdefault("f", f))
+    area.scroll_to_widget(anchor)
+
+    assert "f" in captured
+    assert captured["f"] == 1.0, f"短尾部应贴底，实际 fraction={captured['f']}"
