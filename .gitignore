@@ -10,5 +10,8 @@ __pycache__
 *.log
 .marscode
 env.sh
+# Python 虚拟环境（不入仓）
+.venv/
+venv/
 # LLM 对话总结导出目录（本地产物，不入仓）
 exports/

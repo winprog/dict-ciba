@@ -86,7 +86,10 @@ class DictionaryApp:
         self.conv = LLMConversation(
             system_prompt=(
                 "你是一个中英文语言理解助手，能解释单词、短语、句子和段落，"
-                "并支持多轮追问和深入解释。"
+                "并支持多轮追问和深入解释。\n"
+                "回答请始终使用简体中文；仅专有名词、代码、数学公式可保留原文/原样。\n"
+                "原文若夹杂非常用分隔/装饰字符（如 ♣、✦、❀ 等花纹类符号），请一律忽略、"
+                "仅视作分段，必须完整翻译或作答全文，不得从中途截断省略。"
             ),
             chat=llm_chat_messages,
             on_answer=lambda ans: self.root.after(
