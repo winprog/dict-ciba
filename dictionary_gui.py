@@ -390,6 +390,40 @@ class DictionaryApp:
         anchor = v.latest_question_widget or v.latest_answer_widget
         self.root.after(0, lambda: self.scroll_area.scroll_to_widget(anchor))
 
+    def _auto_grow_window_for_content(self):
+        """LLM 长回答渲染后按内容实际高度自动增高窗口，减少被迫滚动。
+
+        只增高、不缩小（尊重用户手动拖小的窗口）；上限为屏幕高度的 90%，
+        内容再长仍由 ScrollArea 滚动兜底。增高后重新放置窗口，尽量保持
+        不遮挡取词点。
+        """
+        frame = self.llm_view.latest_answer_widget
+        if frame is None:
+            return
+        try:
+            self.scroll_area.frame.update_idletasks()
+            bbox = self.scroll_area.canvas.bbox("all")
+            content_h = bbox[3] - bbox[1] if bbox else 0
+            screen_h = self.root.winfo_screenheight()
+            if screen_h <= 0 or content_h <= 0:
+                return
+            # 需要的最小窗口高度 = 内容高度 + 窗口上下非内容区（标题/输入等）
+            extra = max(0, self.root.winfo_height() - self.scroll_area.canvas.winfo_height())
+            target_h = min(int(screen_h * 0.9), content_h + extra + 20)
+            cur_h = self.root.winfo_height()
+            if target_h <= cur_h:
+                return  # 未被更长的内容撑破，保持现状
+            self.current_window_height = target_h
+            self.window_mgr.place_window(
+                self.last_mouse_position,
+                self.current_window_width,
+                self.current_window_height,
+            )
+            self.root.after(0, lambda: self.scroll_area.scroll_to_widget(
+                self.llm_view.latest_question_widget or self.llm_view.latest_answer_widget))
+        except Exception:
+            return
+
     def _ask_llm(self):
         """提交追问"""
         if not self.llm_view.llm_input:
@@ -443,6 +477,7 @@ class DictionaryApp:
             self.current_data["translation"] = ans
         self.llm_view.render(self.conv.history, loading=False)
         self._llm_scroll_to_latest_answer()
+        self._auto_grow_window_for_content()
 
     def _llm_error(self, error):
         self.conv.append_assistant(f"⚠️ {error}")

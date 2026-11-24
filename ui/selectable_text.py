@@ -53,26 +53,36 @@ class SelectableText(tk.Text):
         self._refit()
         self._schedule(40)  # 布局尚未最终稳定时兜底再自检一次
 
-    def _refit(self, _event=None):
+    def refit(self):
+        """按控件最终显示宽度确定性贴合高度。
+
+        返回折行后的显示行数（未映射/宽度未知时返回 None）。
+        供视图在布局收敛后同步调用：比依赖 <Configure>/after 异步回调
+        更可靠，避免多行结果停留在构造时的 height=1 被压成一两行。
+        """
         try:
-            # 用控件自身的实际显示宽度（父容器 fill 决定），不手动改 width 选项
             avail = self.winfo_width()
         except tk.TclError:
-            return
+            return None
         if avail <= 1:                    # 尚未映射，晚点再试
             self._schedule(30)
-            return
+            return None
         try:
             self.update_idletasks()
             self.tk.call(self._w, "count", "-update", "1.0", "end-1c")
             n = int(self.tk.call(self._w, "count", "-displaylines", "1.0", "end-1c"))
             self.configure(height=max(1, n))
         except tk.TclError:
-            return
+            return None
         self._fit_pending = None
-        if n != self._last_h:
-            self._last_h = n
+        last = self._last_h
+        self._last_h = n
+        if n != last:
             self._schedule(25)            # 布局在收敛，再自检一次直到稳定
+        return n
+
+    def _refit(self, _event=None):
+        self.refit()
 
     # ---------- 右键菜单 ----------
     def _menu(self, _event=None):

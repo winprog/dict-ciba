@@ -123,7 +123,15 @@ class LLMChatView:
 
         self._render_followup_input()
         self._frame.update_idletasks()
+        # 先按最终宽度定宽，再确定性贴合每个气泡的高度。
+        # update_idletasks 不会触发 <Configure>/after，若只依赖异步回调，
+        # 多行结果可能停留在一两行高度；这里同步 refit 保证立即展开。
         self._on_resize()
+        for w in (w for w in self._frame.winfo_children()
+                  if isinstance(w, SelectableText)):
+            w.refit()
+        self._frame.update_idletasks()
+        self._on_resize()  # 高度变化后再重排一次，刷新滚动范围
 
     def _render_followup_input(self):
         """渲染底部追问输入行（回车或点击"追问"提交）。"""

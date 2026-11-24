@@ -79,9 +79,9 @@ def test_render_svg_uses_current_color_for_theme():
 
 
 def test_expand_soft_breaks_inserts_markdown_newline():
-    # 单换行 -> 变成软换行（行尾两空格 + 换行），gradio 才会换行
+    # 单换行 -> 变成显式 <br> 换行，Gradio 各版本都稳定生效
     r = expand_soft_breaks("第一行\n第二行")
-    assert "第一行  \n第二行" in r
+    assert "第一行<br>\n第二行" in r
 
 
 def test_expand_soft_breaks_keeps_paragraph_blank_line():
@@ -95,8 +95,8 @@ def test_expand_soft_breaks_protects_code_and_formula():
     r = expand_soft_breaks(src)
     # 代码块内部换行原样保留
     assert "def f():\n    return 1" in r
-    # 代码块之后、以及公式之后的普通单换行 -> 软换行
-    assert "  \n后面" in r
+    # 代码块之后、以及公式之后的普通单换行 -> <br>
+    assert "<br>\n后面" in r
 
 
 def test_to_gradio_history_pairs_user_bot():

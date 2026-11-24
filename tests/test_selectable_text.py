@@ -73,8 +73,33 @@ def test_height_matches_displaylines(tk_root):
     for _ in range(4):
         root.update_idletasks()
         root.update()
-    w._refit()  # 布局已稳定，强制贴合到真实显示行数
+    w.refit()  # 布局已稳定，强制贴合到真实显示行数
     h = int(w.cget("height"))
     d = int(w.tk.call(w._w, "count", "-displaylines", "1.0", "end-1c"))
     assert w.get("1.0", "end-1c") == text
+    assert h == d, f"height={h} 与 displaylines={d} 不一致"
+
+
+def test_multiline_height_matches_displaylines(tk_root):
+    """LLM 多段回答：高度贴合全部显示行数，不被压成一两行。
+
+    回归用例：若 refit 只依赖异步 <Configure>/after 回调，多行内容会
+    停留在构造时的 height=1，只露出开头一两行；确定性 refit 必须让
+    height 等于真实折行数。
+    """
+    root = tk_root
+    root.geometry("500x600")
+    host = tk.Frame(root)
+    host.pack(fill="both", expand=True)
+    host.configure(width=500)
+    host.update_idletasks()
+    text = "第一段内容。\n\n第二段内容，也可以比较长一点。\n\n" + ("word " * 25)
+    w = SelectableText(host, text, font=("Arial", 13), fg="black")
+    w.pack(fill="x", anchor="w")
+    for _ in range(4):
+        root.update()
+    w.refit()
+    h = int(w.cget("height"))
+    d = int(w.tk.call(w._w, "count", "-displaylines", "1.0", "end-1c"))
+    assert d >= 4, "多行内容折行后显示行数应 >= 4"
     assert h == d, f"height={h} 与 displaylines={d} 不一致"
