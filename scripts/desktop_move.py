@@ -7,6 +7,8 @@ import time
 import sys
 import os
 
+PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def run(cmd, check=False):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
     if check and r.returncode != 0:
@@ -74,7 +76,7 @@ def main():
     wait(1)
     run("xdotool set_desktop 0")
     wait(0.5)
-    cmd = f"cd /home/USER/code/project/dict-ciba && nohup python3 dictionary_gui.py > /tmp/dict_gui.log 2>&1 &"
+    cmd = f"cd {PROJ_ROOT} && nohup python3 dictionary_gui.py > /tmp/dict_gui.log 2>&1 &"
     run(cmd)
     wait(3)
 

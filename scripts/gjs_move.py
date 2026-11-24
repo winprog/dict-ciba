@@ -1,5 +1,7 @@
 """GJS Eval 调用方式调试 + 解决 Dictionary 多桌面问题。"""
-import subprocess, time, sys
+import subprocess, time, sys, os
+
+PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def run(cmd, timeout=10):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -11,7 +13,7 @@ run("pkill -f 'dictionary_gui' 2>/dev/null")
 time.sleep(1)
 run("xdotool set_desktop 0")
 time.sleep(0.5)
-run("cd /home/USER/code/project/dict-ciba && nohup python3 dictionary_gui.py > /tmp/dict_gui.log 2>&1 &")
+run(f"cd {PROJ_ROOT} && nohup python3 dictionary_gui.py > /tmp/dict_gui.log 2>&1 &")
 time.sleep(3)
 
 WIN_ID = run("xdotool search --name Dictionary | head -1")[0]
