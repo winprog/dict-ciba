@@ -75,9 +75,33 @@ def test_height_matches_displaylines(tk_root):
         root.update()
     w.refit()  # 布局已稳定，强制贴合到真实显示行数
     h = int(w.cget("height"))
-    d = int(w.tk.call(w._w, "count", "-displaylines", "1.0", "end-1c"))
+    d = int(w.tk.call(w._w, "count", "-displaylines", "1.0", "end"))
     assert w.get("1.0", "end-1c") == text
     assert h == d, f"height={h} 与 displaylines={d} 不一致"
+
+
+def test_short_two_line_not_collapsed(tk_root):
+    """回归：LLM 短回答（2 个逻辑行，如单词+释义）不能被压成一行。
+
+    曾用 count -displaylines "1.0" "end-1c" 统计显示行，该终点恒比
+    真实显示行数少 1，导致 2 行内容的高度算成 1 行、第二行被裁掉。
+    必须以 "end" 为准，确保 height 覆盖全部显示行。
+    """
+    root = tk_root
+    root.geometry("500x400")
+    host = tk.Frame(root)
+    host.pack(fill="both", expand=True)
+    host.configure(width=500)
+    host.update_idletasks()
+    text = "ideate\nvi. 产生思想；构思设想"
+    w = SelectableText(host, text, font=("Arial", 13), fg="black")
+    w.pack(fill="x", anchor="w")
+    for _ in range(4):
+        root.update()
+    w.refit()
+    h = int(w.cget("height"))
+    assert h >= 2, f"2 个逻辑行被压成 {h} 行"
+    assert w.get("1.0", "end-1c") == text
 
 
 def test_multiline_height_matches_displaylines(tk_root):
@@ -100,6 +124,6 @@ def test_multiline_height_matches_displaylines(tk_root):
         root.update()
     w.refit()
     h = int(w.cget("height"))
-    d = int(w.tk.call(w._w, "count", "-displaylines", "1.0", "end-1c"))
+    d = int(w.tk.call(w._w, "count", "-displaylines", "1.0", "end"))
     assert d >= 4, "多行内容折行后显示行数应 >= 4"
     assert h == d, f"height={h} 与 displaylines={d} 不一致"

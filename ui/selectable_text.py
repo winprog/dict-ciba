@@ -69,8 +69,10 @@ class SelectableText(tk.Text):
             return None
         try:
             self.update_idletasks()
-            self.tk.call(self._w, "count", "-update", "1.0", "end-1c")
-            n = int(self.tk.call(self._w, "count", "-displaylines", "1.0", "end-1c"))
+            self.tk.call(self._w, "count", "-update", "1.0", "end")
+            n = int(self.tk.call(self._w, "count", "-displaylines", "1.0", "end"))
+            if self.get("1.0", "end-1c").endswith("\n"):
+                n -= 1  # 末尾换行代表一个空逻辑行，不计入可见显示行
             self.configure(height=max(1, n))
         except tk.TclError:
             return None
