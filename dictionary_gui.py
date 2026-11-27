@@ -33,6 +33,61 @@ from ui.ui_constants import COLORS, FONTS, PAD
 from ui.spinner import make_spinner
 
 
+# 窗口管理器（WM）舍入容差：geometry 设置的尺寸与 Configure/winfo 报告值
+# 存在 ±1~4px 偏差，相等判定需容忍该误差
+WINDOW_SIZE_TOLERANCE = 4
+
+# 自动贴合时窗口至少能显示的正文字理行数：内容再短，窗口高度也不低于
+# 「最小行数 × 行高」与初始默认高度的较大值，保证正常查词有足够阅读空间
+MIN_WINDOW_LINES = 10
+
+
+def _fit_min_window_height(initial_h, lines, extra, line_h=20):
+    """自动贴合时窗口高度的底线：至少能显示 lines 行正文。
+
+    initial_h: 初始默认窗口高度
+    lines:     最少显示行数（MIN_WINDOW_LINES）
+    extra:     窗口上下非内容区（标题/输入栏等）高度
+    line_h:    单行正文估算高度（像素，兜底 20）
+    """
+    return max(initial_h, lines * line_h + extra)
+
+
+def _should_shrink_window(cur_h, target_h, auto_fit_h, tolerance=WINDOW_SIZE_TOLERANCE):
+    """判断是否应把窗口高度缩回内容所需高度。
+
+    cur_h:      当前窗口实际高度
+    target_h:   内容所需窗口高度（已封顶屏高 90%）
+    auto_fit_h: 上次自动贴合设置的高度（None 表示从未自动贴合）
+    tolerance:  窗口管理器报告高度与目标值之间的零点几像素舍入容差
+    """
+    if auto_fit_h is None:
+        return False            # 窗口从未被程序撑大，不主动缩小
+    if abs(cur_h - auto_fit_h) > tolerance:
+        return False            # 用户手动改过窗口尺寸，尊重不缩
+    return target_h < cur_h     # 内容变矮了才缩
+
+
+def _resize_is_programmatic(w, h, cur_w, cur_h, pending=None, tolerance=WINDOW_SIZE_TOLERANCE):
+    """判定 <Configure> 报告的 (w, h) 是否由程序自身生成，而非用户拖拽。
+
+    程序自身操作会触发的几何变化有三类，其最终报告尺寸必然落入以下两
+    个集合之一：
+    1. pending —— 程序最近一次 place_window 请求的 (宽, 高)，覆盖
+       show_window 重放置与 _apply_window_height 自动增高/缩回；
+    2. cur_w/cur_h —— 程序记录的上一次生效尺寸，覆盖初始显示（映射时
+       Configure 报告初始 geometry）与"同尺寸重放置"。
+
+    因此只有两者都不吻合的尺寸变化才判定为用户手动接管，这样初始显示
+    与每次取词后的重放置都不会被误判为"用户改过窗口"而打断自动贴合。
+    """
+    if pending is not None and abs(w - pending[0]) <= tolerance and abs(h - pending[1]) <= tolerance:
+        return True
+    if abs(w - cur_w) <= tolerance and abs(h - cur_h) <= tolerance:
+        return True
+    return False
+
+
 class DictionaryApp:
     def __init__(self, root):
         self.root = root
@@ -74,6 +129,15 @@ class DictionaryApp:
         # 初始化为默认尺寸
         self.current_window_width = window_width
         self.current_window_height = window_height
+        # 窗口初始默认尺寸（自动贴合缩回的底线）
+        self.initial_window_width = window_width
+        self.initial_window_height = window_height
+        # 上次自动贴合设置的高度（None 表示窗口未被程序撑大/用户已手动接管）
+        self.auto_fit_height = None
+        # 程序最近一次 place_window 请求的 (宽, 高)，用于把 <Configure> 与用户拖拽区分开
+        self._pending_program_geometry = None
+        # 用户手动调整过窗口尺寸后置 True：自动增高/缩回完全停止，尊重用户设置
+        self._user_lock_resize = False
 
         # 桌面定位服务（Facade）：解析桌面布局并计算窗口几何
         self._placement_service = WindowPlacementService()
@@ -223,6 +287,8 @@ class DictionaryApp:
 
     def show_window(self):
         """显示窗口（几何放置/DeskTop 切换委托给 WindowManager）"""
+        # 记录本次程序请求的尺寸：接下来 <Configure> 同尺寸事件不可误判为用户接管
+        self._pending_program_geometry = (self.current_window_width, self.current_window_height)
         self.window_mgr.place_window(
             self.last_mouse_position,
             self.current_window_width,
@@ -349,6 +415,8 @@ class DictionaryApp:
 
         # 强制触发布局刷新，确保首次显示时正确填充
         self.root.after(50, self.scroll_area.force_layout)
+        # 普通查词渲染后同样自动贴合窗口（可增可缩，尊重用户手动调整）
+        self.root.after(120, self._fit_window_for_content)
 
     def _search_error(self, error):
         """P3-3：搜索错误内联为红色条带，不再弹 messagebox。"""
@@ -361,6 +429,7 @@ class DictionaryApp:
               fg=COLORS["danger_text"], bg=COLORS["danger_bg"]).pack(anchor=W, padx=PAD["pad_md"], pady=PAD["pad_s"])
 
         self.root.after(50, self.scroll_area.force_layout)
+        self.root.after(120, self._fit_window_for_content)
 
     def _switch_to_llm_chat(self, word):
         """从搜索流程切换到 LLM 多轮对话视图"""
@@ -390,15 +459,25 @@ class DictionaryApp:
         anchor = v.latest_question_widget or v.latest_answer_widget
         self.root.after(0, lambda: self.scroll_area.scroll_to_widget(anchor))
 
-    def _auto_grow_window_for_content(self):
-        """LLM 长回答渲染后按内容实际高度自动增高窗口，减少被迫滚动。
+    def _fit_window_for_content(self, scroll_to=None):
+        """查询/回答渲染后按内容实际高度自动贴合窗口（可增可缩）。
 
-        只增高、不缩小（尊重用户手动拖小的窗口）；上限为屏幕高度的 90%，
-        内容再长仍由 ScrollArea 滚动兜底。增高后重新放置窗口，尽量保持
-        不遮挡取词点。
+        普通查词与 LLM 回答渲染后都会调用：
+        - 内容变长自动增高；内容变矮且窗口仍停留在上次自动贴合的高度
+          （即用户未手动调整过）时缩回内容所需高度；
+        - 缩回底线为「最少显示行数 MIN_WINDOW_LINES × 行高 + 非内容区」
+          与初始默认高度的较大值，避免 LLM 短回答把窗口缩得过小、正常
+          查词时显示不完整；
+        - 上限为屏幕高度的 90%，内容再长仍由 ScrollArea 滚动兜底；
+        - 用户手动调整过窗口尺寸后（_user_lock_resize）完全停止贴合。
+
+        scroll_to: 非 None 时，增高/缩回后把视口定位到该控件顶部
+                   （LLM 回答传入最新一轮问题气泡；普通查词传 None 不滚动）。
         """
-        frame = self.llm_view.latest_answer_widget
-        if frame is None:
+        if self._user_lock_resize:
+            return
+        # 无内容（如查询失败前/初始态）不贴合；llm 视图控件也被 scrollable_frame 统一承载
+        if not self.scrollable_frame.winfo_children():
             return
         try:
             self.scroll_area.frame.update_idletasks()
@@ -410,19 +489,47 @@ class DictionaryApp:
             # 需要的最小窗口高度 = 内容高度 + 窗口上下非内容区（标题/输入等）
             extra = max(0, self.root.winfo_height() - self.scroll_area.canvas.winfo_height())
             target_h = min(int(screen_h * 0.9), content_h + extra + 20)
+            # 最底线：至少能显示 MIN_WINDOW_LINES 行正文（行高按正文实际字体估算）
+            target_h = max(target_h, self._fit_min_window_height_extra(extra))
             cur_h = self.root.winfo_height()
             if target_h <= cur_h:
-                return  # 未被更长的内容撑破，保持现状
-            self.current_window_height = target_h
-            self.window_mgr.place_window(
-                self.last_mouse_position,
-                self.current_window_width,
-                self.current_window_height,
-            )
-            self.root.after(0, lambda: self.scroll_area.scroll_to_widget(
-                self.llm_view.latest_question_widget or self.llm_view.latest_answer_widget))
+                # 内容未撑破当前窗口：仅当窗口正处于自动贴合高度（用户没手动改过）且内容明显变矮时缩回
+                if not _should_shrink_window(cur_h, target_h, self.auto_fit_height):
+                    return
+                if target_h >= cur_h:
+                    return
+            # 内容变长自动增高 / 内容变矮自动缩回：均记录本次贴合高度供后续判定
+            self.auto_fit_height = target_h
+            self._apply_window_height(target_h, scroll_to=scroll_to)
         except Exception:
             return
+
+    def _fit_min_window_height_extra(self, extra):
+        """当前正文行高估算下的窗口最底线高度。"""
+        line_h = 20
+        try:
+            from tkinter import font as tkfont
+            line_h = tkfont.Font(font=FONTS["body"]).metrics("linespace") or 20
+        except Exception:
+            pass
+        return _fit_min_window_height(self.initial_window_height, MIN_WINDOW_LINES, extra, line_h)
+
+    def _apply_window_height(self, target_h, scroll_to=None):
+        """以 target_h 重新放置窗口，并按需滚动视口。
+
+        scroll_to 非 None 时对齐到该控件顶部（LLM 回答场景把视口定位到
+        最新一轮问题的起始处）；普通查词传 None，保持视口在内容顶部。
+        """
+        self.current_window_height = target_h
+        # 记录本次程序请求的宽度/高度：随后触发的 <Configure> 与之相符即视为程序贴合
+        self._pending_program_geometry = (self.current_window_width, target_h)
+        self.window_mgr.place_window(
+            self.last_mouse_position,
+            self.current_window_width,
+            self.current_window_height,
+        )
+        if scroll_to is not None:
+            self.root.after(0, lambda: self.scroll_area.scroll_to_widget(scroll_to))
 
     def _ask_llm(self):
         """提交追问"""
@@ -477,7 +584,9 @@ class DictionaryApp:
             self.current_data["translation"] = ans
         self.llm_view.render(self.conv.history, loading=False)
         self._llm_scroll_to_latest_answer()
-        self._auto_grow_window_for_content()
+        # LLM 回答渲染后自动贴合窗口；视口定位到最新一轮问题起始处
+        self._fit_window_for_content(
+            self.llm_view.latest_question_widget or self.llm_view.latest_answer_widget)
 
     def _llm_error(self, error):
         self.conv.append_assistant(f"⚠️ {error}")
@@ -489,15 +598,39 @@ class DictionaryApp:
         self.renderer.render(data)
 
     def _on_window_resize(self, event):
-        """当窗口大小变化时，记录新的窗口尺寸"""
-        if event and hasattr(event, 'width') and hasattr(event, 'height'):
-            # 使用初始化时的窗口尺寸作为最小阈值，确保窗口不会小于初始化大小
-            min_width = self.current_window_width
-            min_height = self.current_window_height
-            if event.width >= min_width and event.height >= min_height:
-                # 只有当尺寸大于最小阈值时才更新
-                self.current_window_width = event.width
-                self.current_window_height = event.height
+        """窗口尺寸变化时记录新尺寸，并区分自动贴合与用户手动接管。
+
+        - 程序自身重放置（初始显示、show_window 重放置、_apply_window_height
+          自动增高/缩回）触发的 <Configure>：尺寸与程序请求/记录一致，仅同步
+          实际尺寸、并把 auto_fit_height 校准为 WM 实际报告值，不打断贴合；
+        - 与程序记录尺寸不一致的变化视为用户手动接管：记录实际尺寸、解除
+          自动贴合（auto_fit_height=None）并钉住 _user_lock_resize，此后
+          自动增高/缩回全部停止，完全尊重用户设置的窗口大小（这正是"长结果
+          撑大窗口后短结果不回缩"修复的关键）。
+        """
+        if not (event and hasattr(event, 'width') and hasattr(event, 'height')):
+            return
+        w, h = event.width, event.height
+        if w <= 0 or h <= 0:
+            return
+        if _resize_is_programmatic(
+                w, h,
+                self.current_window_width, self.current_window_height,
+                self._pending_program_geometry):
+            # 程序自身操作的几何变化：仅同步，并吸收 pending（若已落定）
+            if self._pending_program_geometry is not None:
+                self._pending_program_geometry = None
+            self.current_window_width = w
+            self.current_window_height = h
+            if self.auto_fit_height is not None:
+                # 以 WM 实际报告值校准，缩回判定更稳（geometry 与报告存在 ±1~4px 偏差）
+                self.auto_fit_height = h
+            return
+        # 用户手动调整窗口尺寸：记录实际尺寸并永久解除自动贴合
+        self.current_window_width = w
+        self.current_window_height = h
+        self.auto_fit_height = None
+        self._user_lock_resize = True
 
     def on_closing(self):
         """窗口关闭时的处理"""
